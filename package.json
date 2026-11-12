@@ -1,0 +1,18 @@
+{
+  "name": "tongji-campus-local",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "同济校园查询：用户本机登录、只读浏览器查询的 Codex 插件原型",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "doctor": "node src/cli.mjs doctor"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "playwright-core": "1.65.0",
+    "zod": "4.6.7"
+  }
+}

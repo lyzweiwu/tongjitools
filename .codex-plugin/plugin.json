@@ -1,0 +1,15 @@
+{
+  "name": "tongji-campus-local",
+  "version": "0.1.0",
+  "description": "在用户本机浏览器中登录同济官网，辅助读取本人课表、高等讲堂与图书馆页面。",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "requires_local_executor": true,
+  "interface": {
+    "displayName": "同济校园助手（本地版）",
+    "shortDescription": "本机登录，查询课表、讲堂与图书",
+    "longDescription": "用户自行在同济官方页面完成登录，插件复用独立的本地浏览器会话读取页面。优先支持研究生查询；页面结构尚未识别时提示用户手动定位。",
+    "capabilities": [],
+    "defaultPrompt": "帮我查询同济课表、高等讲堂或图书馆信息。首次使用时打开官方页面，由我自行登录。"
+  }
+}

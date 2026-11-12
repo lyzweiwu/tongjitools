@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "tongji-campus-local": {
+      "type": "stdio",
+      "command": "/bin/sh",
+      "args": ["${PLUGIN_ROOT}/bin/launch.sh"],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+node_modules/
+.local/
+work/
+inputs/
+outputs/
+browser-profile/
+session-state.json*
+*.log
+*.tgz
+*.zip
+.DS_Store
