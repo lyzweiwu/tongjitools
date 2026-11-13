@@ -41,6 +41,7 @@ export function makeConfig(env = process.env) {
     dataDir: path.resolve(env.TONGJI_CAMPUS_DATA_DIR || base),
     chromePath: candidates.find(p => existsSync(p)),
     headless: env.TONGJI_HEADLESS === '1',
+    directConnection: env.TONGJI_DIRECT_CONNECTION === '1',
     services: { academic: academicUrl, library: libraryUrl },
   };
 }

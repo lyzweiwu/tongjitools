@@ -4,6 +4,7 @@ import path from 'node:path';
 import { chromium } from 'playwright-core';
 import { displayUrl, isSchoolUrl, isServiceUrl, makeConfig } from './config.mjs';
 import { parseTimetable, parseLectures, parseLibrary } from './parse.mjs';
+import { prepareBookRequest } from './library-flow.mjs';
 
 export const NAVIGATION = {
   timetable: /^(查看课表|我的课表|个人课表|学生课表|课表查询|课程表|课表)$/,
@@ -81,7 +82,7 @@ export class CampusBrowser {
         headless: this.config.headless,
         viewport: null,
         acceptDownloads: false,
-        args: ['--no-first-run', '--no-default-browser-check'],
+        args: ['--no-first-run', '--no-default-browser-check', ...(this.config.directConnection ? ['--no-proxy-server'] : [])],
       });
     } catch {
       throw new Error('独立浏览器启动失败：请关闭其他同济插件会话后重试，并检查 Chrome 路径与系统运行权限。');
@@ -132,7 +133,7 @@ export class CampusBrowser {
 
   status() {
     return {
-      status: 'ok', version: '0.1.0', browserRunning: !!this.context,
+      status: 'ok', version: '0.2.0', browserRunning: !!this.context,
       chromeFound: !!this.config.chromePath,
       sessionProfileExists: existsSync(path.join(this.config.dataDir, 'browser-profile')),
       sessions: [...this.pages.entries()].filter(([, p]) => !p.isClosed())
@@ -328,5 +329,9 @@ export class CampusBrowser {
   async close() {
     if (this.context) { await this.saveSession(); await this.context.close(); }
     return { status: 'ok', message: '已关闭插件的独立浏览器。登录配置保留在本机；这不会撤销学校端会话。' };
+  }
+
+  async prepareBookRequest(options) {
+    return prepareBookRequest(this, options);
   }
 }

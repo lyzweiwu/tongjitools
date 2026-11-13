@@ -12,3 +12,9 @@ test('display URLs do not reveal SSO tickets in query or fragment', () => {
   assert.equal(displayUrl('https://1.tongji.edu.cn/callback?ticket=SECRET#access_token=SECRET'), 'https://1.tongji.edu.cn/callback');
   assert.equal(displayUrl('https://webpac.tongji.edu.cn/?ticket=SECRET#/Home?token=SECRET'), 'https://webpac.tongji.edu.cn/#/Home');
 });
+
+test('direct connection is opt-in for the dedicated browser', () => {
+  assert.equal(makeConfig({}).directConnection, false);
+  assert.equal(makeConfig({ TONGJI_DIRECT_CONNECTION: '1' }).directConnection, true);
+  assert.equal(makeConfig({ TONGJI_DIRECT_CONNECTION: '0' }).directConnection, false);
+});

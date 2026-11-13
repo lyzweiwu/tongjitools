@@ -1,6 +1,6 @@
 {
   "name": "tongji-campus-local",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "在用户本机浏览器中登录同济官网，辅助读取本人课表、高等讲堂与图书馆页面。",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",

@@ -14,8 +14,12 @@ test('real stdio handshake discovers tools, calls status and rejects invalid ser
   try {
     await client.connect(transport);
     const { tools } = await client.listTools();
-    assert.equal(tools.length, 7);
+    assert.equal(tools.length, 8);
     assert.ok(tools.some(t => t.name === 'campus_query_timetable'));
+    assert.ok(tools.some(t => t.name === 'campus_prepare_book_request'));
+    const invalidPreview = await client.callTool({ name: 'campus_prepare_book_request', arguments: { query: '' } });
+    assert.equal(invalidPreview.isError, true);
+    assert.equal(tools.some(t => /submit|confirm_book|cancel_book/.test(t.name)), false);
     assert.ok(tools.every(t => !/password|cookie|token/.test(JSON.stringify(t.inputSchema))));
     const result = await client.callTool({ name: 'campus_status', arguments: {} });
     const status = JSON.parse(result.content[0].text);
