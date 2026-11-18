@@ -20,14 +20,19 @@ function readBookCards() {
   const records = [];
   for (const a of document.querySelectorAll('a[href*="/bookDetails/"]')) {
     if (!visible(a) || !/^\s*\d+[.．、]\s*\[/.test(a.innerText)) continue;
-    let callNumber;
+    let callNumbers = [];
     for (let p = a.parentElement, n = 0; p && p !== document.body && n < 7; p = p.parentElement, n++) {
-      const numbers = [...new Set(p.innerText.split(/\r?\n/).map(s => s.trim()).filter(s =>
-        /^[A-Z]{1,3}\d[A-Z\d.\-]*\/[A-Z\d][A-Z\d.\-]*(?:[（(]\d+[）)])?$/i.test(s)))];
-      if (numbers.length === 1) { callNumber = numbers[0]; break; }
-      if (numbers.length > 1) break;
+      // Stop before leaving this card. A collected edition can list multiple
+      // call numbers in one line, one for each selectable volume.
+      const hasOtherCard = [...p.querySelectorAll('a[href*="/bookDetails/"]')].some(link =>
+        link !== a && visible(link) && /^\s*\d+[.．、]\s*\[/.test(link.innerText));
+      if (hasOtherCard) break;
+      const groups = p.innerText.split(/\r?\n/).map(line => line.trim().split(/[;；]/).map(s => s.trim()).filter(Boolean));
+      const numbers = [...new Set(groups.filter(group => group.length && group.every(s =>
+        /^[A-Z]{1,3}\d[A-Z\d.\-]*\/[A-Z\d][A-Z\d.,=\-/]*(?:[（(]\d+[）)])?$/i.test(s))).flat())];
+      if (numbers.length) { callNumbers = numbers; break; }
     }
-    if (callNumber) records.push({
+    for (const callNumber of callNumbers) records.push({
       title: a.innerText.replace(/^\s*\d+[.．、]\s*\[[^\]]+\]\s*/, '').trim(),
       callNumber, url: a.href,
     });
@@ -35,12 +40,54 @@ function readBookCards() {
   return records;
 }
 
-// Preparation only: there is deliberately no submit handler or submit option.
-export async function prepareBookRequest(browser, { query, callNumber } = {}) {
+async function findRequestAction(page, callNumber, location) {
+  const rows = page.getByRole('row')
+    .filter({ has: page.getByRole('cell', { name: callNumber, exact: true }) })
+    .filter({ has: page.getByRole('cell', { name: location, exact: true }) })
+    .filter({ has: page.getByText('请求', { exact: true }) });
+  if (await rows.count() !== 1) return null;
+  let action = rows.locator('a:visible').filter({ hasText: /^请求$/ });
+  if (await action.count() === 0) {
+    // Ant tables may put the visible action in a fixed copy of the same row.
+    const key = await rows.getAttribute('data-row-key');
+    const root = page.locator('.ant-table').filter({ has: rows });
+    if (key === null || await root.count() !== 1) return null;
+    action = root.locator(`tr[data-row-key=${JSON.stringify(key)}] a:visible`).filter({ hasText: /^请求$/ });
+  }
+  return await action.count() === 1 ? action : null;
+}
+
+async function applyPickupPreference(page, dialog, preferences, timeout) {
+  const { pickupLocation, preferredCampus } = preferences;
+  if (!pickupLocation && !preferredCampus) return {};
+  const combobox = dialog.getByRole('combobox').filter({ visible: true });
+  if (await combobox.count() !== 1) return { preferredPickup: pickupLocation };
+  await combobox.click({ timeout });
+  const options = page.getByRole('option').filter({ visible: true });
+  const desired = pickupLocation && page.getByRole('option', { name: pickupLocation, exact: true }).filter({ visible: true });
+  if (desired) {
+    await desired.first().waitFor({ state: 'visible', timeout }).catch(() => {});
+    if (await desired.count() === 1) {
+      await desired.click({ timeout });
+      const selected = dialog.getByText(pickupLocation, { exact: true }).filter({ visible: true });
+      await selected.waitFor({ state: 'visible', timeout: Math.min(timeout, 1000) }).catch(() => {});
+      if (await selected.count() === 1) return { pickupLocation, pickupPreselected: true };
+    }
+  }
+  await options.first().waitFor({ state: 'visible', timeout }).catch(() => {});
+  const preferredPickupOptions = (await options.allInnerTexts()).map(text => text.trim())
+    .filter(text => preferredCampus && text.includes(preferredCampus));
+  return { preferredPickup: pickupLocation, preferredPickupOptions, pickupPreselected: false };
+}
+
+// Both modes open the official request form. The handoff lets the reader
+// complete it directly while the preview locks submission.
+export async function prepareBookRequest(browser, { query, callNumber } = {}, { handoff = false } = {}) {
   if (typeof query !== 'string' || !query.trim() || query.length > 120 ||
       (callNumber !== undefined && (typeof callNumber !== 'string' || !callNumber.trim() || callNumber.length > 100))) {
     throw new Error('请提供书名或 ISBN，以及可选的索书号。');
   }
+  if (handoff && !callNumber) throw new Error('须提供已选版本的索书号。');
   query = query.trim();
   callNumber = callNumber?.trim();
   const started = performance.now();
@@ -75,7 +122,7 @@ export async function prepareBookRequest(browser, { query, callNumber } = {}) {
   const timeout = (max = BOOK_PREVIEW_TIMEOUTS.stepMs) => Math.max(1, Math.min(max, BOOK_PREVIEW_TIMEOUTS.totalMs - (performance.now() - started)));
   const mark = name => { const now = performance.now(); timings[name] = Math.round(now - previous); previous = now; };
   const result = (status, fields = {}) => ({
-    kind: 'book_request_preview', status, submitted: false,
+    kind: handoff ? 'book_request_handoff' : 'book_request_preview', status, submitted: false,
     stopAt: 'pickup_and_contact', query, ...fields,
     timingsMs: { ...timings, ...(!Object.hasOwn(timings, stage) ? { [stage]: Math.round(performance.now() - previous) } : {}), total: elapsed() },
     diagnostics: { stage, step, limits: BOOK_PREVIEW_TIMEOUTS, ...(failure ? { failure } : {}),
@@ -155,23 +202,37 @@ export async function prepareBookRequest(browser, { query, callNumber } = {}) {
     }
     const table = detail.tables.find(t => t.headers.includes('当前请求数') && t.headers.includes('馆藏地'));
     const at = name => table?.headers.indexOf(name) ?? -1;
-    const eligible = table?.rows.find(row => row[at('索书号')] === selected.callNumber && Number(row[at('可借复本')]) > 0);
-    if (!eligible) return result('not_available', { message: '当前没有识别到可委托的在架复本；未打开申请表。' });
-    const sourceLocation = eligible[at('馆藏地')];
-    step = 'details.find_request';
-    const rows = page.getByRole('row').filter({ hasText: selected.callNumber }).filter({ hasText: sourceLocation })
-      .filter({ has: page.getByText('请求', { exact: true }) });
-    if (await rows.count() !== 1) return result('needs_page_selection', { message: '未唯一识别目标馆藏的请求入口。' });
-    let action = rows.locator('a:visible').filter({ hasText: /^请求$/ });
-    // Ant tables may duplicate action cells in a fixed column. Use the visible
-    // copy with the same row key, never an unrelated row's action.
-    if (await action.count() === 0) {
-      const key = await rows.getAttribute('data-row-key');
-      const root = page.locator('.ant-table').filter({ has: rows });
-      if (key === null || await root.count() !== 1) return result('needs_page_selection');
-      action = root.locator(`tr[data-row-key=${JSON.stringify(key)}] a:visible`).filter({ hasText: /^请求$/ });
+    const preferences = await browser.preferences();
+    const { preferredCampus, allowCrossCampus } = preferences;
+    const stock = (table?.rows || []).filter(row => row[at('索书号')] === selected.callNumber)
+      .map(row => ({ location: row[at('馆藏地')], availableCopies: Number(row[at('可借复本')]) }))
+      .filter(row => row.location && Number.isFinite(row.availableCopies));
+    const inPreferredCampus = row => Boolean(preferredCampus && row.location.includes(preferredCampus));
+    const available = stock.filter(row => row.availableCopies > 0);
+    const local = available.filter(inPreferredCampus);
+    const other = available.filter(row => !inPreferredCampus(row));
+    const targets = preferredCampus && !allowCrossCampus ? local : [...local, ...other];
+    if (!targets.length) {
+      return preferredCampus && !allowCrossCampus && other.length
+        ? result('cross_campus_options', { preferredCampus, stock, message: '常用校区当前无可借复本，其他馆舍有可借复本。' })
+        : result('not_available', { preferredCampus, stock, message: '当前没有识别到可委托的在架复本。' });
     }
-    if (await action.count() !== 1) return result('needs_page_selection', { message: '请求按钮不可唯一识别。' });
+    step = 'details.find_request';
+    let action;
+    let selectedStock;
+    for (const row of targets) {
+      action = await findRequestAction(page, selected.callNumber, row.location);
+      if (action) { selectedStock = row; break; }
+    }
+    if (!action) {
+      if (preferredCampus && !allowCrossCampus && other.length) {
+        return result('cross_campus_options', { preferredCampus, stock, message: '未找到常用校区可操作的委托入口，其他馆舍显示有可借复本。' });
+      }
+      return result('needs_page_selection', { preferredCampus, stock, message: '未唯一识别可借馆藏的请求入口。' });
+    }
+    const sourceLocation = selectedStock.location;
+    const sourceSelection = { preferredCampus, matchesPreferredCampus: preferredCampus ? inPreferredCampus(selectedStock) : null,
+      preferredCampusStock: stock.filter(inPreferredCampus) };
     mark('details');
     stage = 'form';
     step = 'form.open';
@@ -181,7 +242,7 @@ export async function prepareBookRequest(browser, { query, callNumber } = {}) {
     await dialog.waitFor({ state: 'visible', timeout: timeout() });
     // Local preview safeguard: prevent both button clicks and Enter submission.
     step = 'form.protect_submission';
-    await dialog.evaluate(el => {
+    if (!handoff) await dialog.evaluate(el => {
       el.dataset.campusPreviewOnly = 'true';
       const isSubmit = b => /^(?:确\s*定|提\s*交|确认申请)$/.test(b?.textContent?.trim() || '');
       for (const b of el.querySelectorAll('button')) if (isSubmit(b)) b.disabled = true;
@@ -199,6 +260,20 @@ export async function prepareBookRequest(browser, { query, callNumber } = {}) {
     await phone.waitFor({ state: 'visible', timeout: timeout() });
     step = 'form.wait_email';
     await email.waitFor({ state: 'visible', timeout: timeout() });
+    if (handoff) {
+      step = 'form.pickup_preference';
+      const pickup = await applyPickupPreference(page, dialog, preferences, timeout(3000))
+        .catch(() => ({ preferredPickup: preferences.pickupLocation, pickupPreselected: false }));
+      await page.bringToFront();
+      mark('form');
+      step = 'form.ready';
+      return result('ready_for_user_submission', {
+        book: { title: selected.title, callNumber: selected.callNumber, sourceLocation },
+        source: { url: displayUrl(page.url()), title: detail.title },
+        sourceSelection, pickup,
+        message: '请在官方表单确认取书地和联系方式，再提交委托申请。',
+      });
+    }
     step = 'form.open_pickups';
     await dialog.getByRole('combobox').click({ timeout: timeout() });
     const options = page.locator('[role="option"]:visible');
@@ -218,6 +293,7 @@ export async function prepareBookRequest(browser, { query, callNumber } = {}) {
     return result('ready_for_user_input', {
       book: { title: selected.title, callNumber: selected.callNumber, sourceLocation },
       source: { url: displayUrl(page.url()), title: detail.title },
+      sourceSelection,
       form: { pickupOptions, phoneRequired: true, emailRequired: true, hasPhone, hasEmail },
       submissionDisabled: enabledSubmitButtons === 0,
       message: '已停在取书地和手机号表单；未选择取书地、未填写联系方式、未提交申请。',

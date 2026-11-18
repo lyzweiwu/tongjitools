@@ -18,6 +18,9 @@ cd "$PLUGIN_DIR"
 if [ "${1:-}" = "cli" ]; then
   shift
   exec "$NODE_BIN" "$PLUGIN_DIR/src/cli.mjs" "$@"
+elif [ "${1:-}" = "install-browser" ]; then
+  shift
+  exec "$NODE_BIN" "$PLUGIN_DIR/node_modules/playwright-core/cli.js" install --no-shell --no-remove chromium "$@"
 elif [ "${1:-}" = "test" ]; then
   shift
   exec "$NODE_BIN" --test test/*.test.mjs "$@"

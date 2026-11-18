@@ -1,10 +1,12 @@
 {
   "name": "tongji-campus-local",
-  "version": "0.2.0",
+  "version": "0.5.1",
   "private": true,
   "type": "module",
-  "description": "同济校园查询与委托表单准备：本机登录、读取页面、到表单即止的 Codex 插件原型",
-  "engines": { "node": ">=20" },
+  "description": "同济校园查询、图书委托准备与座位查询预约：本机登录和页面证据",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/server.mjs",
     "test": "node --test test/*.test.mjs",

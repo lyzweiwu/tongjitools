@@ -5,6 +5,10 @@ import { chromium } from 'playwright-core';
 import { displayUrl, isSchoolUrl, isServiceUrl, makeConfig } from './config.mjs';
 import { parseTimetable, parseLectures, parseLibrary } from './parse.mjs';
 import { prepareBookRequest } from './library-flow.mjs';
+import { recommendBooks } from './book-recommendations.mjs';
+import { querySeats, reserveSeat } from './seat-flow.mjs';
+import { readPreferences, resetPreferences, savePreferences } from './preferences.mjs';
+import { openBrowserLogin, passwordManagerFlags } from './browser-login.mjs';
 
 export const NAVIGATION = {
   timetable: /^(查看课表|我的课表|个人课表|学生课表|课表查询|课程表|课表)$/,
@@ -62,6 +66,18 @@ export class CampusBrowser {
     this.context = null;
     this.pages = new Map();
     this.queue = Promise.resolve();
+    this.seatChoices = new Map();
+    this.loginAttempts = new WeakSet();
+    this.activeLoginMode = null;
+  }
+
+  get browserProfile() {
+    const type = this.config.browser?.type;
+    const suffix = type && type !== 'chrome' ? `-${type}` : '';
+    return {
+      directory: path.join(this.config.dataDir, `browser-profile${suffix}`),
+      sessionFile: path.join(this.config.dataDir, `session-state${suffix}.json`),
+    };
   }
 
   // One browser operation at a time, even when a host parallelizes tool calls.
@@ -73,25 +89,30 @@ export class CampusBrowser {
 
   async ensureContext() {
     if (this.context) return this.context;
-    if (!this.config.chromePath) throw new Error('未找到 Chrome。请安装 Google Chrome，或设置 TONGJI_CHROME_PATH。');
+    const browser = this.config.browser;
+    if (!browser) throw new Error('未找到兼容浏览器。请安装 Chrome 或 Edge，或运行 sh bin/setup.sh --with-browser 安装 Chromium。');
     await mkdir(this.config.dataDir, { recursive: true, mode: 0o700 });
     await chmod(this.config.dataDir, 0o700);
+    const { loginMode } = await this.preferences();
+    const chromeQuickLogin = loginMode === 'browser' && browser.type === 'chrome' && !this.config.headless;
     try {
-      this.context = await chromium.launchPersistentContext(path.join(this.config.dataDir, 'browser-profile'), {
-        executablePath: this.config.chromePath,
+      this.context = await chromium.launchPersistentContext(this.browserProfile.directory, {
+        executablePath: browser.path,
         headless: this.config.headless,
         viewport: null,
         acceptDownloads: false,
+        ...(chromeQuickLogin ? { ignoreDefaultArgs: passwordManagerFlags } : {}),
         args: ['--no-first-run', '--no-default-browser-check', ...(this.config.directConnection ? ['--no-proxy-server'] : [])],
       });
     } catch {
-      throw new Error('独立浏览器启动失败：请关闭其他同济插件会话后重试，并检查 Chrome 路径与系统运行权限。');
+      throw new Error(`${browser.name} 独立浏览器启动失败。请检查该浏览器的安装及系统权限，或关闭占用专用会话的窗口后重试。`);
     }
+    this.activeLoginMode = loginMode;
     this.context.setDefaultTimeout(4000);
     // Session cookies and sessionStorage may otherwise disappear on browser
     // exit. Keep them in the same private local directory, never tool output.
     try {
-      const serialized = await readFile(path.join(this.config.dataDir, 'session-state.json'), 'utf8');
+      const serialized = await readFile(this.browserProfile.sessionFile, 'utf8');
       if (serialized.length <= 5_000_000) {
         const saved = JSON.parse(serialized);
         const cookies = (saved.cookies || []).filter(c => {
@@ -107,7 +128,7 @@ export class CampusBrowser {
         }, { origins: saved.sessionStorage || {} });
       }
     } catch { /* First login or an expired/unreadable local state: use the school login UI. */ }
-    this.context.on('close', () => { this.context = null; this.pages.clear(); });
+    this.context.on('close', () => { this.context = null; this.activeLoginMode = null; this.pages.clear(); });
     return this.context;
   }
 
@@ -119,23 +140,28 @@ export class CampusBrowser {
         return domain === 'tongji.edu.cn' || domain.endsWith('.tongji.edu.cn');
       });
       const sessionStorage = {};
-      for (const p of this.context.pages().filter(p => isServiceUrl(p.url(), 'academic', this.config) || isServiceUrl(p.url(), 'library', this.config))) {
+      for (const p of this.context.pages().filter(p => Object.keys(this.config.services).some(service => isServiceUrl(p.url(), service, this.config)))) {
         sessionStorage[new URL(p.url()).origin] = await p.evaluate(() => Object.fromEntries(Object.entries(window.sessionStorage))).catch(() => ({}));
       }
       const value = JSON.stringify({ cookies, sessionStorage });
       if (value.length > 5_000_000) return;
-      const temp = path.join(this.config.dataDir, 'session-state.json.tmp');
+      const sessionFile = this.browserProfile.sessionFile;
+      const temp = `${sessionFile}.tmp`;
       await writeFile(temp, value, { mode: 0o600 });
       await chmod(temp, 0o600);
-      await rename(temp, path.join(this.config.dataDir, 'session-state.json'));
+      await rename(temp, sessionFile);
     } catch { /* A query can still work when local session persistence is unavailable. */ }
   }
 
   status() {
     return {
-      status: 'ok', version: '0.2.0', browserRunning: !!this.context,
-      chromeFound: !!this.config.chromePath,
-      sessionProfileExists: existsSync(path.join(this.config.dataDir, 'browser-profile')),
+      status: 'ok', version: '0.5.1', browserRunning: !!this.context,
+      browserFound: !!this.config.browser,
+      browserName: this.config.browser?.name ?? null,
+      browserType: this.config.browser?.type ?? null,
+      chromeFound: this.config.browser?.type === 'chrome',
+      quickLoginSupported: this.config.browser?.type === 'chrome',
+      sessionProfileExists: Boolean(this.config.browser) && existsSync(this.browserProfile.directory),
       sessions: [...this.pages.entries()].filter(([, p]) => !p.isClosed())
         .map(([service, page]) => ({ service, url: displayUrl(page.url()) })),
       note: '已保存浏览器配置不代表仍然登录。登录有效性需读取目标业务页面确认。',
@@ -158,12 +184,31 @@ export class CampusBrowser {
     return page;
   }
 
+  preferences() { return readPreferences(this.config.dataDir); }
+
+  async configurePreferences({ reset = false, ...changes } = {}) {
+    if (reset) await resetPreferences(this.config.dataDir);
+    const settings = Object.keys(changes).length
+      ? await savePreferences(this.config.dataDir, changes)
+      : await this.preferences();
+    return {
+      status: 'ok',
+      preferences: settings,
+      loginModeAppliesOnNextBrowserStart: this.activeLoginMode !== null && this.activeLoginMode !== settings.loginMode,
+    };
+  }
+
   async openLogin(service) {
     const page = await this.pageFor(service);
     await page.bringToFront();
+    const { loginMode } = await this.preferences();
+    if (loginMode === 'browser' && this.activeLoginMode === 'browser' &&
+        this.config.browser?.type === 'chrome' && !this.config.headless) {
+      return openBrowserLogin(this, page, service);
+    }
     return {
       status: 'user_action_required', service, url: displayUrl(page.url()),
-      message: '请在已打开的独立 Chrome 窗口中，确认域名后自行完成学校登录。登录后打开需要查询的课表／高等讲堂／馆藏页面，再继续查询。不要在聊天中发送密码、验证码或 Cookie。',
+      message: '请在已打开的插件专用浏览器中，确认域名后自行完成学校登录。登录后打开需要查询的课表／高等讲堂／馆藏／座位页面，再继续查询。不要在聊天中发送密码、验证码或 Cookie。',
     };
   }
 
@@ -179,7 +224,7 @@ export class CampusBrowser {
       const passwordVisible = await frame.locator('input[type="password"]:visible').count().catch(() => 0);
       if (authHost || passwordVisible) return {
         status: 'login_required', url: displayUrl(current), title: '需要用户登录',
-        text: '', tables: [], links: [], message: '请在独立 Chrome 窗口中自行完成学校登录后重试。',
+        text: '', tables: [], links: [], message: '请在插件专用浏览器中自行完成学校登录后重试。',
       };
     }
     const parts = [];
@@ -294,7 +339,7 @@ export class CampusBrowser {
     }
     return { ...result, fetchedAt: new Date().toISOString(),
       nextStep: ['needs_page_selection', 'unstructured'].includes(result.status)
-        ? `请在独立 Chrome 窗口打开${kind === 'timetable' ? '个人课表' : '高等讲堂'}页面后重新查询。当前内容不能用于断言没有记录。` : undefined };
+        ? `请在插件专用浏览器打开${kind === 'timetable' ? '个人课表' : '高等讲堂'}页面后重新查询。当前内容不能用于断言没有记录。` : undefined };
   }
 
   async searchBooks(query) {
@@ -316,7 +361,7 @@ export class CampusBrowser {
     const buttons = page.getByRole('button', { name: /^(检索|搜索|查询|Search)$/i });
     if (await inputs.count() !== 1 || (!homePage && await buttons.count() !== 1)) return {
       status: 'needs_page_selection', query, url: first.url,
-      message: '未唯一识别书目检索框和检索按钮。请在独立 Chrome 窗口中手动搜索书名，再调用 campus_read_current_page(service="library") 读取结果。',
+      message: '未唯一识别书目检索框和检索按钮。请在插件专用浏览器中手动搜索书名，再调用 campus_read_current_page(service="library") 读取结果。',
     };
     await inputs.fill(query);
     if (homePage) await inputs.press('Enter');
@@ -327,11 +372,19 @@ export class CampusBrowser {
   }
 
   async close() {
+    this.seatChoices.clear();
     if (this.context) { await this.saveSession(); await this.context.close(); }
     return { status: 'ok', message: '已关闭插件的独立浏览器。登录配置保留在本机；这不会撤销学校端会话。' };
   }
 
+  async recommendBooks(options) { return recommendBooks(this, options); }
+
+  async openBookRequest(options) { return prepareBookRequest(this, options, { handoff: true }); }
+
   async prepareBookRequest(options) {
     return prepareBookRequest(this, options);
   }
+
+  async querySeats(options) { return querySeats(this, options); }
+  async reserveSeat(options) { return reserveSeat(this, options); }
 }

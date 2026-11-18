@@ -1,16 +1,21 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "tongji-campus-local",
-  "version": "0.2.0",
-  "description": "在用户本机浏览器中登录同济官网，辅助读取本人课表、高等讲堂与图书馆页面。",
-  "keywords": ["tongji", "campus", "local-browser", "mcp"],
+  "version": "0.5.1",
+  "description": "在本机登录同济官网，查询课表、讲堂、图书与座位；确认后预约普通座位。",
+  "keywords": [
+    "tongji",
+    "campus",
+    "local-browser",
+    "mcp"
+  ],
   "extensions": {
     "com.openai": {
       "requires_local_executor": true,
       "interface": {
         "displayName": "同济校园助手（本地版）",
-        "shortDescription": "本机登录，查询课表、讲堂与图书",
-        "longDescription": "用户自行在同济官方页面完成登录，插件复用独立的本地浏览器会话读取页面。优先支持研究生查询；页面结构尚未识别时提示用户手动定位。",
+        "shortDescription": "本机登录，查询课表、图书与座位",
+        "longDescription": "复用本机独立浏览器读取同济官方页面。支持座位日期、馆舍、楼层和区域筛选；普通座位需用户选择并明确确认后预约。指定小时时段不能锁座，考研及研修座位仅查询。",
         "capabilities": [],
         "defaultPrompt": "帮我查询同济课表、高等讲堂或图书馆信息。首次使用时打开官方页面，由我自行登录。"
       }

@@ -4,7 +4,10 @@ work/
 inputs/
 outputs/
 browser-profile/
-session-state.json*
+browser-profile-*/
+session-state*.json*
+preferences.json
+.preferences-*.tmp
 *.log
 *.tgz
 *.zip
