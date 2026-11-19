@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { CampusBrowser } from './browser.mjs';
 import { preferenceFields } from './preferences.mjs';
 import { calendarExportOptions } from './calendar-export.mjs';
+import { renewalCheckOptions, renewalPageOptions } from './loan-flow.mjs';
 
 const browser = new CampusBrowser();
 const server = new McpServer({ name: 'tongji-campus-local', version: '0.5.1' });
@@ -27,8 +28,8 @@ function register(name, title, description, inputSchema, action, readOnly = true
   }));
 }
 register('campus_status', '检查本地同济查询环境', '检查选中的本地浏览器及运行状态；不会启动浏览器，不返回登录凭证，也不将已保存配置当作已登录。', {}, () => browser.status());
-register('campus_get_preferences', '读取本机偏好', '读取常用校区、取书点、跨校区调书和登录方式。', {}, () => browser.configurePreferences());
-register('campus_set_preferences', '设置本机偏好', '经用户选择后保存或重置常用校区、取书点、跨校区调书和登录方式。browser 模式使用 Chrome 的密码管理器；没有账号或凭证参数。pickupLocation 只能保存用户指定的官网取书点原名。', z.strictObject({
+register('campus_get_preferences', '读取本机偏好', '读取常用校区、取书点、跨校区调书、登录方式和借阅到期提醒天数。', {}, () => browser.configurePreferences());
+register('campus_set_preferences', '设置本机偏好', '经用户选择后保存或重置本机偏好。loanDueSoonDays 设置查询时的临期阈值，默认 3 天。browser 模式使用 Chrome 的密码管理器。pickupLocation 只能保存用户指定的官网取书点原名。', z.strictObject({
   ...preferenceFields, reset: z.boolean().optional(),
 }), args => browser.configurePreferences(args), false);
 register('campus_open_login', '打开同济网页登录', '打开插件专用浏览器。默认由用户在同济官方页面自行登录。使用 Chrome 且开启 browser 模式时可尝试使用 Chrome 已自动填充的凭证。验证码及扫码由用户自己完成。', { service }, ({ service }) => browser.openLogin(service), false);
@@ -37,8 +38,9 @@ register('campus_export_timetable', '将个人课表导出为 ICS', '仅在用�
 register('campus_query_lectures', '读取高等讲堂信息', '读取研究生高等讲堂页面的完成进度或讲座记录。区分统计与列表；不会报名、提交心得或评价。无法定位需用户手动打开页面。', {}, () => browser.query('lectures'));
 register('campus_search_books', '查询同济馆藏', '在同济书目页面填写书名并点击检索。无法唯一识别检索控件则要求用户手动搜索。可借状态只在页面有明确证据时返回；不会预约、续借或借书。', { query: z.string().trim().min(1).max(120) }, ({ query }) => browser.searchBooks(query));
 register('campus_prepare_book_request', '准备图书委托表单（不提交）', '连续完成馆藏检索、版本定位、登录检查并打开在架复本的申请表。只返回取书地选项和联系方式是否已填写；不返回手机号或邮箱，不填写、不提交。多个版本时需提供索书号。', { query: z.string().trim().min(1).max(120), callNumber: z.string().trim().min(1).max(100).optional() }, args => browser.prepareBookRequest(args), false);
-register('campus_recommend_books', '按同济馆藏与热门借阅推荐图书', '按作者、书名片段或主题检索，优先用官方热门借阅榜的名次与借阅次数推荐。作者检索用 match=author，文学作品可传 discipline=文学。展示可借册数和榜单范围，未匹配榜单的候选没有热度数据。此工具只查询。', {
-  query: z.string().trim().min(1).max(100),
+register('campus_recommend_books', '按同济馆藏与热门借阅推荐图书', '按作者、书名片段或主题检索，优先用官方热门借阅榜的名次与借阅次数推荐。没有关键词时可传 browsePopular=true 浏览官方榜单。作者检索用 match=author，文学作品可传 discipline=文学。展示可借册数和榜单范围。', {
+  query: z.string().trim().min(1).max(100).optional(),
+  browsePopular: z.literal(true).optional(),
   match: z.enum(['author', 'keyword']).optional(),
   discipline: z.enum(['经济学', '教育学', '历史学', '艺术学', '法学', '管理学', '农学', '理学', '文学', '工学', '医学', '哲学', '军事学', '综合']).optional(),
   limit: z.number().int().min(1).max(10).optional(),
@@ -47,6 +49,9 @@ register('campus_open_book_request', '打开已选图书的正式委托表单', 
   query: z.string().trim().min(1).max(120),
   callNumber: z.string().trim().min(1).max(100),
 }, args => browser.openBookRequest(args), false);
+register('campus_query_my_loans', '查询本人当前借阅', '复用本机同济 OPAC 会话，读取「当前借阅」本机构纸质图书列表和应还日期，按上海日历日显示临期、今天到期和逾期。缺失日期为 null。分页未读全时返回 partial。', z.strictObject({}), () => browser.queryMyLoans());
+register('campus_check_renewal', '检查当前借阅的续借资格', '读取本次同济 OPAC 当前借阅。可传多本书的 titles 或本次 loanId，省略则检查已读取的借阅。资格以官方逐条明确状态为准，续借入口仅表示需要官方确认。', renewalCheckOptions, args => browser.checkRenewal(args));
+register('campus_open_renewal_page', '打开当前借阅记录供手动续借', '用户明确要求打开续借页面时使用。传书名或本次候选 loanId。遇到同名或分页不完整时让用户选择记录。打开官方当前借阅页定位该行，由用户自行完成操作。', renewalPageOptions, args => browser.openRenewalPage(args), false);
 register('campus_query_seats', '查询图书馆座位', '按上海日期、馆舍、楼层、区域和类型查询实时余位与座位号。默认四平路校区图书馆。保留用户时间要求，但普通座位按日、考研和研修按期预约，不能承诺按小时锁座。只查询，不选座、不提交。', {
   date:z.string().trim().min(1).max(10).optional(), campus:z.string().trim().min(1).max(60).optional(), floor:z.string().trim().min(1).max(20).optional(),
   startTime:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(), endTime:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),

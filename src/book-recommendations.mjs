@@ -25,11 +25,11 @@ function matches(book, { query, match }) {
     .every(term => fields.some(field => field.includes(term)));
 }
 
-export function recommendFromSources({ query, match = 'keyword', limit = 5 }, catalog, ranking) {
+export function recommendFromSources({ query, match = 'keyword', limit = 5, browsePopular = false }, catalog, ranking) {
   const result = new Map();
   const key = book => book.id ? book.id + ':' + (book.callNumber || '') : book.callNumber && workTitle(book.title) + ':' + book.callNumber;
   for (const book of ranking.books) {
-    if (book.title && matches(book, { query, match }) && key(book)) result.set(key(book), book);
+    if (book.title && (browsePopular || matches(book, { query, match })) && key(book)) result.set(key(book), book);
   }
   for (const book of catalog.books) {
     if (!book.title || (match === 'author' && !authorMatches(book.author, query)) || !key(book)) continue;
@@ -72,8 +72,9 @@ export function recommendFromSources({ query, match = 'keyword', limit = 5 }, ca
   return {
     kind: 'book_recommendations',
     status: candidates.length ? (candidates.some(hasRank) ? 'ok' : 'no_rank_match')
-      : catalog.status === 'ok' || catalog.status === 'empty' ? 'no_matches_in_view' : 'page_pending',
-    query, match, candidates,
+      : catalog.status === 'ok' || catalog.status === 'empty' || (browsePopular && ranking.status === 'empty')
+        ? 'no_matches_in_view' : 'page_pending',
+    ...(browsePopular ? { browsePopular } : { query, match }), candidates,
     catalog: { status: catalog.status, url: HOME_URL, pagesRead: catalog.status === 'ok' ? 1 : 0 },
     ranking: { status: ranking.status, url: ranking.url, period: ranking.period, scope: ranking.scope,
       entriesRead: ranking.books.length, metric: '借阅次数' },
@@ -178,8 +179,10 @@ async function readRanking(page, discipline) {
     period: '最近一年', books };
 }
 
-export async function recommendBooks(browser, { query, match = 'keyword', limit = 5, discipline } = {}) {
-  if (typeof query !== 'string' || !normalize(query) || query.length > 100) return { status: 'invalid_query', message: '请输入作者、书名片段或主题关键词。' };
+export async function recommendBooks(browser, { query, match = 'keyword', limit = 5, discipline, browsePopular = false } = {}) {
+  const valid = browsePopular === true ? query === undefined
+    : browsePopular === false && typeof query === 'string' && Boolean(normalize(query)) && query.length <= 100;
+  if (!valid) return { status: 'invalid_query', message: '请指定作者、书名片段或主题关键词，也可选择浏览热门借阅榜。' };
   if (!isSchoolUrl(browser.config.services.library) ||
       new URL(browser.config.services.library).hostname !== 'webpac.tongji.edu.cn') {
     return { status: 'needs_page_selection', message: '该推荐流程使用同济新版馆藏页面。' };
@@ -195,8 +198,9 @@ export async function recommendBooks(browser, { query, match = 'keyword', limit 
     finally { await page.close().catch(() => {}); }
   }
   const [catalog, ranking] = await Promise.all([
-    inspect(page => readCatalog(page, query), { status: 'unavailable', books: [] }),
+    browsePopular ? { status: 'not_requested', books: [] }
+      : inspect(page => readCatalog(page, query), { status: 'unavailable', books: [] }),
     inspect(page => readRanking(page, discipline), { status: 'unavailable', url: RANK_URL, books: [] }),
   ]);
-  return recommendFromSources({ query, match, limit }, catalog, ranking);
+  return recommendFromSources({ query, match, limit, browsePopular }, catalog, ranking);
 }

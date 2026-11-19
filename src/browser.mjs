@@ -10,6 +10,7 @@ import { querySeats, reserveSeat } from './seat-flow.mjs';
 import { readPreferences, resetPreferences, savePreferences } from './preferences.mjs';
 import { openBrowserLogin, passwordManagerFlags } from './browser-login.mjs';
 import { exportTimetable } from './calendar-export.mjs';
+import { runLoanFlow } from './loan-flow.mjs';
 
 export const NAVIGATION = {
   timetable: /^(查看课表|我的课表|个人课表|学生课表|课表查询|课程表|课表)$/,
@@ -77,6 +78,9 @@ export class CampusBrowser {
     this.pages = new Map();
     this.queue = Promise.resolve();
     this.seatChoices = new Map();
+    this.loanChoices = new Map();
+    this.loanPage = null;
+    this.loanNeedsPageSelection = false;
     this.loginAttempts = new WeakSet();
     this.activeLoginMode = null;
   }
@@ -138,7 +142,14 @@ export class CampusBrowser {
         }, { origins: saved.sessionStorage || {} });
       }
     } catch { /* First login or an expired/unreadable local state: use the school login UI. */ }
-    this.context.on('close', () => { this.context = null; this.activeLoginMode = null; this.pages.clear(); });
+    this.context.on('close', () => {
+      this.context = null;
+      this.activeLoginMode = null;
+      this.pages.clear();
+      this.loanPage = null;
+      this.loanNeedsPageSelection = false;
+      this.loanChoices.clear();
+    });
     return this.context;
   }
 
@@ -150,7 +161,8 @@ export class CampusBrowser {
         return domain === 'tongji.edu.cn' || domain.endsWith('.tongji.edu.cn');
       });
       const sessionStorage = {};
-      for (const p of this.context.pages().filter(p => Object.keys(this.config.services).some(service => isServiceUrl(p.url(), service, this.config)))) {
+      for (const p of this.context.pages().filter(p => p !== this.loanPage &&
+        Object.keys(this.config.services).some(service => isServiceUrl(p.url(), service, this.config)))) {
         sessionStorage[new URL(p.url()).origin] = await p.evaluate(() => Object.fromEntries(Object.entries(window.sessionStorage))).catch(() => ({}));
       }
       const value = JSON.stringify({ cookies, sessionStorage });
@@ -182,8 +194,10 @@ export class CampusBrowser {
     const context = await this.ensureContext();
     const remembered = this.pages.get(service);
     // A user may have opened a business page in another tab manually.
-    const candidates = context.pages().filter(p => !p.isClosed() && isServiceUrl(p.url(), service, this.config));
-    const page = candidates.at(-1) || (remembered && !remembered.isClosed() ? remembered : await context.newPage());
+    const candidates = context.pages().filter(p => !p.isClosed() && p !== this.loanPage &&
+      isServiceUrl(p.url(), service, this.config));
+    const page = candidates.at(-1) || (remembered && remembered !== this.loanPage && !remembered.isClosed()
+      ? remembered : await context.newPage());
     this.pages.set(service, page);
     if (navigate && !isServiceUrl(page.url(), service, this.config)) {
       try { await page.goto(this.config.services[service], { waitUntil: 'domcontentloaded', timeout: 25000 }); }
@@ -384,11 +398,16 @@ export class CampusBrowser {
 
   async close() {
     this.seatChoices.clear();
+    this.loanChoices.clear();
     if (this.context) { await this.saveSession(); await this.context.close(); }
     return { status: 'ok', message: '已关闭插件的独立浏览器。登录配置保留在本机；这不会撤销学校端会话。' };
   }
 
   async recommendBooks(options) { return recommendBooks(this, options); }
+
+  async queryMyLoans() { return runLoanFlow(this, 'query'); }
+  async checkRenewal(options) { return runLoanFlow(this, 'check', options); }
+  async openRenewalPage(options) { return runLoanFlow(this, 'open', options); }
 
   async exportTimetable(options) { return exportTimetable(this, options); }
 

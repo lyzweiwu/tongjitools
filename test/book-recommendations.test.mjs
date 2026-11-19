@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { recommendFromSources } from '../src/book-recommendations.mjs';
+import { recommendBooks, recommendFromSources } from '../src/book-recommendations.mjs';
 
 const author = '(日) 样例作者著';
 const ranked = { id: '12', title: '样例推理', author, callNumber: 'I313.45/T12-2/2', availableCopies: 2,
@@ -38,4 +38,28 @@ test('catalogue fallback distinguishes unavailable rankings from zero popularity
   assert.equal(result.status, 'no_rank_match');
   assert.equal(result.ranking.status, 'unavailable');
   assert.equal(result.candidates[0].popularity, undefined);
+});
+
+test('a recommendation without a topic uses the public ranking and excludes catalogue fallback', async () => {
+  const catalog = { status: 'not_requested', books: [] };
+  const result = recommendFromSources({ browsePopular: true, limit: 1 }, catalog, ranking);
+  assert.equal(result.status, 'ok');
+  assert.equal(result.catalog.pagesRead, 0);
+  assert.equal(result.candidates[0].popularity.rank, ranked.popularity.rank);
+  assert.equal(Object.hasOwn(result, 'query'), false);
+  assert.equal(recommendFromSources({ browsePopular: true }, catalog, { status: 'empty', books: [] }).status, 'no_matches_in_view');
+  let tabsOpened = 0;
+  let navigated;
+  const unavailable = await recommendBooks({
+    config: { services: { library: 'https://webpac.tongji.edu.cn/opac/openlink.php' } },
+    ensureContext: async () => ({
+      newPage: async () => {
+        tabsOpened++;
+        return { goto: async url => { navigated = url; throw new Error('fixture'); }, close: async () => {} };
+      },
+    }),
+  }, { browsePopular: true });
+  assert.equal(tabsOpened, 1);
+  assert.match(navigated, /#\/readRange$/);
+  assert.equal(unavailable.status, 'page_pending');
 });

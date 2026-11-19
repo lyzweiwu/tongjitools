@@ -49,6 +49,9 @@ codex mcp add tongji-campus-local -- /bin/sh "$PWD/bin/launch.sh"
 | `campus_recommend_books` | 按作者、书名片段或主题查馆藏，优先显示匹配官方热门借阅榜的版本。 |
 | `campus_open_book_request` | 用户选定版本后复查可委托复本并打开正式表单，由用户在官网提交。 |
 | `campus_prepare_book_request` | 准备委托表单，到取书地和手机号即停止，不填写、不提交。 |
+| `campus_query_my_loans` | 读取官方当前借阅中的本机构纸质图书，查询应还日期、临期、今天到期和逾期。 |
+| `campus_check_renewal` | 按官方列表中的明确状态检查一本、多本或当前已读取的借阅。 |
+| `campus_open_renewal_page` | 定位已选借阅记录，由读者在官网处理续借。 |
 | `campus_query_seats` | 查询普通/考研/研修座位、区域余位和具体座位号，默认四平路馆。 |
 | `campus_reserve_seat` | 用户选定并确认后，重新检查普通座位再点击一次预约；真实提交尚未验收。 |
 | `campus_read_current_page` | 读取用户手动定位的同济业务页面。 |
@@ -124,7 +127,47 @@ sh bin/launch.sh cli prepare-book "线性代数" "O151.2/ZT437.3A"
 sh bin/launch.sh cli recommend-books '{"query":"东野圭吾","match":"author","discipline":"文学"}'
 ```
 
+只想了解热门书目时，可传 `browsePopular: true` 读取官方榜单。
+
 回复候选号或书名选定版本后，助手重新检查该版本的可借馆藏并打开官方委托表单。你可以在浏览器选择取书地、核对联系方式并提交。
+
+## 图书馆借阅管家
+
+在已连接此源码的 Codex 聊天中说「帮我看看现在借了哪些书，有没有快到期的，哪些可以续借？」工具读取[同济 OPAC 的「我的图书馆」](https://webpac.tongji.edu.cn/opac/openlink.php#/personalCenter)，复用专用浏览器的本地会话。若个人中心提示登录，在该标签中自行认证。馆藏检索能打开时，个人中心仍可能要求登录。
+
+| 想做的事 | 使用方式 |
+| --- | --- |
+| 查当前借阅、逾期或某本书的应还日期 | 调用 `campus_query_my_loans({})`，按本次记录和日期状态回答。 |
+| 检查《深度学习》和《计算机网络》 | 调用 `campus_check_renewal({titles: ["深度学习", "计算机网络"]})`。省略参数时检查本次读取的全部记录。 |
+| 打开《深度学习》的续借操作位置 | 调用 `campus_open_renewal_page({title: "深度学习"})`。遇到同名书或分页未读全时，按应还日期等信息选定具体记录，再用当次 `loanId` 打开。 |
+| 先查临期书，再推荐新书 | 先查当前借阅，再用 `campus_recommend_books` 查询指定主题。没有主题时用 `browsePopular: true` 读取热门借阅榜，在对话中排除本次已借书目。 |
+
+查询按 `Asia/Shanghai` 日历日计算。默认未来 1–3 天为即将到期，今天到期单列。可通过 `campus_set_preferences({loanDueSoonDays: 7})` 把临期阈值改成 7 天，允许 0–365 天。应还日期无法确认时返回 `null` 和 `unknown`。提醒随查询实时生成。作者、续借次数和官方借阅状态仅在相应列可识别时提供。`loanId` 是临时选择标识，在同一服务内最多保留 5 分钟，下一次读取会发出新 ID。借阅清单不写入持久化文件或日志，MCP 返回的数据会交给调用模型处理。
+
+资格为 `eligible` 或 `ineligible` 时，依据页面显示的逐册状态。只有续借按钮时为 `requires_official_confirmation`，证据不足时为 `unknown`。公开规则涉及借阅类型及预约限制，实际资格由官方系统决定。由于单册和批量续借可直接发起业务操作，工具只把官方借阅列表定位到该行。交接状态 `ready_for_user_action` 会保留浏览器供用户操作，结果字段 `submitted` 为 `false`。见[同济大学图书馆图书借阅规则](https://www.lib.tongji.edu.cn/index.php?classid=11976&newsid=31412&t=show)。
+
+默认刷新并读取本机构纸质图书的首个可见列表页。分页未读全或有行无法解析时返回 `partial`，`allPagesRead` 为 `false`，临期和逾期数只统计已读且日期可确认的记录。列表完整或官网显示总数时提供 `totalLoans`，否则为 `null`。联盟借阅、电子图书、期刊和历史借阅需在官网对应栏目核对。页面证据充分时空结果返回 `no_active_loans`。`login_required`、`needs_page_selection`、`page_pending`、`page_structure_changed`、`network_error` 或 `timeout` 表示本次没有取得可靠列表。
+
+### 命令行
+
+已保存有效会话时，可在源码目录运行以下命令。
+
+```sh
+sh bin/launch.sh cli my-loans
+sh bin/launch.sh cli check-renewal "深度学习" "计算机网络"
+sh bin/launch.sh cli preferences '{"loanDueSoonDays":7}'
+```
+
+首次使用可运行 `sh bin/launch.sh cli login library`，在专用窗口登录，在同一终端输入 `my-loans`、`check-renewal 深度学习` 或 `check-renewal`。单次 CLI 调用结束时会关闭该进程的浏览器。需要保留窗口做续借交接时使用 MCP 工具。
+
+### 真实账户人工验收
+
+已核对公开 OPAC 入口、未登录时显示的登录入口，以及公开前端中的当前借阅表头和续借控件。两个 CLI 入口访问实际 OPAC 时都能识别未登录状态。真实账户登录后的借阅行、空列表、分页及交接位置仍待核对。
+
+1. 重新加载指向此源码的 MCP 服务并新开聊天。在插件专用浏览器使用本人账号登录 OPAC，打开「我的图书馆 → 我的借阅 → 当前借阅 → 图书」。
+2. 运行 `campus_query_my_loans`，逐项核对首屏书名、应还日期、未还数量和分页提示。若账号当前无借阅，核对工具是否能确认空结果。遇到 `page_structure_changed` 时在官网确认显示情况。
+3. 用一条在借记录运行 `campus_check_renewal`，对照官网实际可见的资格和续借入口。页面只显示续借入口时应显示需要官方确认。
+4. 运行 `campus_open_renewal_page`，若有同名记录按应还日期选定后再打开。确认浏览器定位正确、续借次数与应还日期维持原值、工具报告 `submitted: false`。验收在该页结束。
 
 ## 借书与登录偏好
 
@@ -191,12 +234,13 @@ macOS 默认会话目录为 `~/Library/Application Support/TongjiCampusLocal`。
 
 ```sh
 npm test
+node test/loan-flow-smoke.mjs
 node test/seat-flow-smoke.mjs
 node test/library-flow-smoke.mjs
 node test/browser-smoke.mjs
 ```
 
-当前默认测试覆盖 MCP 握手、输入验证、解析、空结果、诊断分类、凭证输出边界和 ICS 导出。导出测试包含单双周、换教室、跨年、课程变更、UTF-8 行折叠、稳定 UID、文件冲突和失败状态。座位 Chrome 模拟检查覆盖 12 类场景。委托准备及交接 Chrome 模拟检查共 16 项，包含实际延迟 13 秒的慢检索。通用 Chrome 模拟检查覆盖工作台导航、拆分表格、课表导出、讲堂卡片、异步结果、新标签和本机会话恢复。测试使用虚构数据，仓库不包含个人课表、讲堂记录、登录会话或页面截图。
+当前默认测试覆盖 MCP 握手、输入验证、解析、空结果、诊断分类、凭证输出边界、ICS 导出及借阅日期和续借资格。借阅 Chrome 模拟检查覆盖异步加载、分页、同名确认、登录失效、隐私字段和零续借提交。导出测试包含单双周、换教室、跨年、课程变更、UTF-8 行折叠、稳定 UID、文件冲突和失败状态。座位 Chrome 模拟检查覆盖 12 类场景。委托准备及交接 Chrome 模拟检查共 16 项，包含实际延迟 13 秒的慢检索。通用 Chrome 模拟检查覆盖工作台导航、拆分表格、课表导出、讲堂卡片、异步结果、新标签和本机会话恢复。测试使用虚构数据，仓库不包含个人课表、讲堂记录、登录会话或页面截图。
 
 - `src/`：MCP 服务、浏览器连接、固定准备流程与解析器。
 - `bin/`：启动和依赖安装脚本。

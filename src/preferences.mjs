@@ -2,15 +2,20 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { defaultLoanDueSoonDays } from './loan-status.mjs';
 
 export const preferenceFields = {
   preferredCampus: z.enum(['四平路', '嘉定', '沪西', '沪北']).nullable().optional(),
   pickupLocation: z.string().trim().min(1).max(120).nullable().optional(),
   allowCrossCampus: z.boolean().optional(),
   loginMode: z.enum(['manual', 'browser']).optional(),
+  loanDueSoonDays: z.number().int().min(0).max(365).optional(),
 };
 const preferenceSchema = z.strictObject(preferenceFields);
-const defaults = { preferredCampus: null, pickupLocation: null, allowCrossCampus: true, loginMode: 'manual' };
+const defaults = {
+  preferredCampus: null, pickupLocation: null, allowCrossCampus: true, loginMode: 'manual',
+  loanDueSoonDays: defaultLoanDueSoonDays,
+};
 
 export async function readPreferences(dataDir) {
   try {

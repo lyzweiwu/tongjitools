@@ -14,7 +14,7 @@ test('real stdio handshake discovers tools, calls status and rejects invalid ser
   try {
     await client.connect(transport);
     const { tools } = await client.listTools();
-    assert.equal(tools.length, 15);
+    assert.equal(tools.length, 18);
     assert.ok(tools.some(t => t.name === 'campus_query_timetable'));
     const exporter = tools.find(t => t.name === 'campus_export_timetable');
     assert.equal(exporter.annotations.readOnlyHint, false);
@@ -27,8 +27,26 @@ test('real stdio handshake discovers tools, calls status and rejects invalid ser
     assert.ok(tools.some(t => t.name === 'campus_prepare_book_request'));
     assert.ok(tools.some(t => t.name === 'campus_query_seats'));
     assert.ok(tools.some(t => t.name === 'campus_reserve_seat'));
-    assert.ok(tools.some(t => t.name === 'campus_recommend_books' && t.annotations.readOnlyHint));
+    const recommendations = tools.find(t => t.name === 'campus_recommend_books');
+    assert.equal(recommendations.annotations.readOnlyHint, true);
+    assert.ok(recommendations.inputSchema.properties.browsePopular);
+    const conflictingRecommendation = await client.callTool({ name: recommendations.name,
+      arguments: { query: '测试图书', browsePopular: true } });
+    assert.equal(conflictingRecommendation.structuredContent.status, 'invalid_query');
     assert.ok(tools.some(t => t.name === 'campus_open_book_request' && !t.annotations.readOnlyHint));
+    const loans = tools.find(t => t.name === 'campus_query_my_loans');
+    const renewal = tools.find(t => t.name === 'campus_check_renewal');
+    const handoff = tools.find(t => t.name === 'campus_open_renewal_page');
+    assert.equal(loans.annotations.readOnlyHint, true);
+    assert.equal(renewal.annotations.readOnlyHint, true);
+    assert.ok(renewal.inputSchema.properties.titles);
+    assert.equal(handoff.annotations.readOnlyHint, false);
+    assert.equal(handoff.annotations.destructiveHint, false);
+    for (const args of [{}, { title: '测试书目', confirm: true }, { loanId: 'fixture-id' },
+      { title: '测试书目', loanId: '00000000-0000-4000-8000-000000000000' }]) {
+      const invalid = await client.callTool({ name: handoff.name, arguments: args });
+      assert.equal(invalid.isError || invalid.structuredContent?.status === 'invalid_input', true);
+    }
     const ambiguousRequest = await client.callTool({ name: 'campus_open_book_request', arguments: { query: '同名图书' } });
     assert.equal(ambiguousRequest.isError, true);
     const invalidReservation = await client.callTool({name:'campus_reserve_seat',arguments:{selectionId:'invalid',confirm:true}});
