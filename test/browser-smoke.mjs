@@ -1,14 +1,15 @@
 // Explicit integration check; not part of the default unit-test glob.
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { CampusBrowser } from '../src/browser.mjs';
 import { makeConfig } from '../src/config.mjs';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const browser = new CampusBrowser({ ...makeConfig(), headless: true, dataDir: path.join(root, '.local', 'browser-smoke-profile') });
+const dataDir = await mkdtemp(path.join(tmpdir(), 'tongji-browser-smoke-'));
+const browser = new CampusBrowser({ ...makeConfig(), headless: true, dataDir });
 const home = '<html><title>研究生门户</title><body><a href="/graduate/timetable">查看课表</a><p>培养计划</p><table><tr><th>课程名称</th><th>学分</th></tr><tr><td>旧培养计划</td><td>2</td></tr></table></body></html>';
-const timetable = '<html><title>个人课表</title><body><h1>个人课表</h1><a href="/evaluate">我的高等讲堂</a><input value="DO_NOT_LEAK_INPUT"><div hidden>DO_NOT_LEAK_HIDDEN</div><a href="/x?ticket=DO_NOT_LEAK_TICKET">详情</a><div class="el-table"><div class="el-table__header-wrapper"><table><tr><th>课程名称</th><th>上课地点</th><th>教学安排</th></tr></table></div><div class="el-table__body-wrapper"><table><tr><td>测试研究生课程</td><td>测试教学楼</td><td>周一 1-2节</td></tr></table></div></div></body></html>';
+const timetable = '<html><title>个人课表</title><body><h1>个人课表</h1><select aria-label="学期"><option>2025-2026学年第2学期</option><option selected>2026-2027学年第1学期</option></select><a href="/evaluate">我的高等讲堂</a><input value="DO_NOT_LEAK_INPUT"><div hidden>DO_NOT_LEAK_HIDDEN</div><a href="/x?ticket=DO_NOT_LEAK_TICKET">详情</a><div class="el-table"><div class="el-table__header-wrapper"><table><tr><th>课程名称</th><th>上课地点</th><th>教学安排</th></tr></table></div><div class="el-table__body-wrapper"><table><tr><td>测试研究生课程</td><td>测试教学楼</td><td>1-2周 周一 1-2节</td></tr></table></div></div></body></html>';
 const lectures = '<html><title>我的高等讲堂</title><body><h1>心得录入与评价</h1><div>最终成绩：未完成</div><div>6/<br>2<br>校级应通过次数 / 校级通过次数</div><table><tr><th>讲座名称</th><th>讲座级别</th></tr></table><p>暂无数据 共0条</p></body></html>';
 const library = '<html><title>馆藏检索</title><body><input type="text" onkeydown="if(event.key === \'Enter\')setTimeout(() => {document.querySelector(\'td\').textContent=\'新检索图书\';history.replaceState({},\'\',\'#/searchList\')}, 700)"><table><tr><th>书名</th><th>馆藏状态</th></tr><tr><td>旧检索图书</td><td>在馆</td></tr></table></body></html>';
 try {
@@ -24,6 +25,12 @@ try {
   const page = browser.pages.get('academic');
   const snapshot = await browser.snapshot(page, 'academic');
   assert.equal(/DO_NOT_LEAK/.test(JSON.stringify(snapshot)), false, 'input, hidden text or query ticket leaked');
+  const calendar = await browser.exportTimetable({ semesterStartDate: '2026-09-14' });
+  assert.equal(calendar.status, 'exported', JSON.stringify(calendar));
+  assert.equal(calendar.eventCount, 2);
+  assert.equal(calendar.semester, '2026-2027-1');
+  assert.match(await readFile(calendar.filePath, 'utf8'), /DTSTART:20260914T000000Z\r\n/);
+  assert.doesNotMatch(await readFile(calendar.filePath, 'utf8'), /DO_NOT_LEAK/);
   const newer = await context.newPage();
   await newer.goto('https://1.tongji.edu.cn/graduate/timetable');
   assert.equal(await browser.pageFor('academic'), newer, 'new manual business tab ignored');
@@ -46,5 +53,8 @@ try {
   assert.equal(await restoredPage.evaluate(() => sessionStorage.getItem('fixture-token')), 'FIXTURE_STORAGE_ONLY');
   assert.ok((await restoredContext.cookies()).some(c => c.name === 'fixture-session' && c.value === 'FIXTURE_COOKIE_ONLY'));
   assert.equal(/FIXTURE_COOKIE_ONLY|FIXTURE_STORAGE_ONLY/.test(JSON.stringify(await browser.snapshot(restoredPage, 'academic'))), false);
-  console.log(JSON.stringify({ status: 'ok', checks: ['real_chrome_launch', 'workbench_navigation', 'split_table_parsing', 'credential_exclusion', 'new_tab_selection', 'lecture_card_navigation', 'async_search_freshness', 'unchanged_results_rejected', 'local_session_restore_without_exposure'] }));
-} finally { await browser.close(); }
+  console.log(JSON.stringify({ status: 'ok', checks: ['real_chrome_launch', 'workbench_navigation', 'split_table_parsing', 'credential_exclusion', 'timetable_export_from_selected_semester', 'new_tab_selection', 'lecture_card_navigation', 'async_search_freshness', 'unchanged_results_rejected', 'local_session_restore_without_exposure'] }));
+} finally {
+  await browser.close();
+  await rm(dataDir, { recursive: true, force: true });
+}

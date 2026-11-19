@@ -9,41 +9,48 @@ import { recommendBooks } from './book-recommendations.mjs';
 import { querySeats, reserveSeat } from './seat-flow.mjs';
 import { readPreferences, resetPreferences, savePreferences } from './preferences.mjs';
 import { openBrowserLogin, passwordManagerFlags } from './browser-login.mjs';
+import { exportTimetable } from './calendar-export.mjs';
 
 export const NAVIGATION = {
   timetable: /^(查看课表|我的课表|个人课表|学生课表|课表查询|课程表|课表)$/,
   lectures: /^(高等讲堂|高等讲堂信息|高等讲堂查询|我的高等讲堂|高等讲堂完成情况)$/,
 };
 
-export async function extractFrame(frame) {
+export async function extractFrame(frame, forExport = false) {
   // Read rendered text only. Input values, scripts, hidden nodes, cookies and
   // browser storage are deliberately outside this snapshot.
-  return frame.evaluate(() => {
+  return frame.evaluate(forExport => {
     const visible = el => !!el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden';
     const clean = value => (value || '').replace(/[\t ]+/g, ' ').trim();
     const limit = (value, n) => clean(value).slice(0, n);
     let remainingTableChars = 18000;
     const tableRoots = [...document.querySelectorAll('.ant-table, .el-table, table, [role="table"], [role="grid"]')].filter(visible);
-    const tables = tableRoots.filter(el => !tableRoots.some(other => other !== el && other.contains(el))).slice(0, 8).map(table => {
-        const rowEls = [...table.querySelectorAll('tr, [role="row"]')].filter(visible);
-        const allRows = rowEls.slice(0, 121).map(row => ({
-          isHeader: !!row.querySelector('th, [role="columnheader"]'),
-          cells: [...row.querySelectorAll('th, td, [role="columnheader"], [role="cell"], [role="gridcell"]')]
-            .filter(visible).slice(0, 20).map(cell => {
-              const value = limit(cell.innerText, Math.min(800, Math.max(0, remainingTableChars)));
-              remainingTableChars -= value.length;
-              return value;
-            }),
-        })).filter(row => row.cells.length);
-        const headerIndex = allRows.findIndex(row => row.isHeader);
+    const roots = tableRoots.filter(el => !tableRoots.some(other => other !== el && other.contains(el)));
+    const tables = roots.slice(0, 8).map(table => {
+      let clipped = false;
+      const rowEls = [...table.querySelectorAll('tr, [role="row"]')].filter(visible);
+      const allRows = rowEls.slice(0, 121).map(row => {
+        const cells = [...row.querySelectorAll('th, td, [role="columnheader"], [role="cell"], [role="gridcell"]')].filter(visible);
+        clipped ||= cells.length > 20;
         return {
-          headers: headerIndex >= 0 ? allRows[headerIndex].cells : [],
-          rows: allRows.filter((_, i) => i !== headerIndex).map(row => row.cells),
-          truncated: rowEls.length > 121 || remainingTableChars <= 0,
+          isHeader: !!row.querySelector('th, [role="columnheader"]'),
+          cells: cells.slice(0, 20).map(cell => {
+            const raw = clean(cell.innerText);
+            const value = raw.slice(0, Math.min(800, Math.max(0, remainingTableChars)));
+            clipped ||= value.length < raw.length;
+            remainingTableChars -= value.length;
+            return value;
+          }),
         };
-      });
-    // Clone only to omit editable/form content from body text. No hidden input
-    // values or page source are read into the result.
+      }).filter(row => row.cells.length);
+      const headerIndex = allRows.findIndex(row => row.isHeader);
+      return {
+        headers: headerIndex >= 0 ? allRows[headerIndex].cells : [],
+        rows: allRows.filter((_, i) => i !== headerIndex).map(row => row.cells),
+        truncated: rowEls.length > 121 || remainingTableChars <= 0 || (forExport && clipped),
+      };
+    });
+    // Omit editable/form content from the page text.
     const lines = [];
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     let node;
@@ -56,8 +63,11 @@ export async function extractFrame(frame) {
     }
     const links = [...document.querySelectorAll('a[href]')].filter(visible).slice(0, 100)
       .map(a => ({ text: limit(a.innerText, 80), url: a.href })).filter(a => a.text);
-    return { title: document.title, text: lines.join('\n').slice(0, 16000), tables, links };
-  });
+    const selectedTerms = forExport ? [...document.querySelectorAll('select, .ant-select-selection-item, .el-select__selected-item, h1, h2')]
+      .filter(visible).slice(0, 50).map(el => limit(el.tagName === 'SELECT' ? el.selectedOptions[0]?.text : el.innerText, 120)) : [];
+    return { title: document.title, text: lines.join('\n').slice(0, 16000), tables, links,
+      ...(forExport ? { selectedTerms, truncated: roots.length > 8 || total > 16000 } : {}) };
+  }, forExport);
 }
 
 export class CampusBrowser {
@@ -212,7 +222,7 @@ export class CampusBrowser {
     };
   }
 
-  async snapshot(page, service) {
+  async snapshot(page, service, { forExport = false } = {}) {
     const current = page.url();
     if (!isSchoolUrl(current)) {
       return { url: displayUrl(current), title: '', text: '', tables: [], links: [],
@@ -229,10 +239,10 @@ export class CampusBrowser {
     }
     const parts = [];
     for (const frame of frames.slice(0, 6)) {
-      try { parts.push(await extractFrame(frame)); } catch { /* Frame changed during SSO/navigation. */ }
+      try { parts.push(await extractFrame(frame, forExport)); } catch { /* Frame changed during SSO/navigation. */ }
     }
     let tableBudget = 24000;
-    let truncated = false;
+    let truncated = forExport && (frames.length > parts.length || parts.some(part => part.truncated) || parts.flatMap(part => part.tables).length > 8);
     const tables = [];
     for (const table of parts.flatMap(p => p.tables).slice(0, 8)) {
       if (tableBudget <= 0) { truncated = true; break; }
@@ -260,7 +270,8 @@ export class CampusBrowser {
     };
     await this.saveSession();
     return { status: 'ok', service, url: displayUrl(current), title, text, tables, links,
-      fetchedAt: new Date().toISOString(), truncated, contentTrust: 'untrusted_page_data' };
+      fetchedAt: new Date().toISOString(), truncated, contentTrust: 'untrusted_page_data',
+      ...(forExport ? { selectedTerms: parts.flatMap(part => part.selectedTerms) } : {}) };
   }
 
   async readCurrent(service) {
@@ -268,14 +279,14 @@ export class CampusBrowser {
     return this.snapshot(page, service);
   }
 
-  async waitForFresh(page, service, before, timeout = 8000) {
+  async waitForFresh(page, service, before, timeout = 8000, options) {
     const fingerprint = s => JSON.stringify(s.tables?.length ? s.tables : s.text);
     const original = fingerprint(before);
     const deadline = Date.now() + timeout;
     let previous;
     while (Date.now() < deadline) {
       await page.waitForTimeout(300);
-      const current = await this.snapshot(page, service);
+      const current = await this.snapshot(page, service, options);
       if (current.status === 'login_required') return current;
       const signature = fingerprint(current);
       if (current.status === 'ok' && signature !== original && !/正在(?:加载|检索)|加载中|loading\s*\.{1,3}/i.test(current.text)) {
@@ -309,15 +320,15 @@ export class CampusBrowser {
     return { navigated: true, label: candidates[0].label };
   }
 
-  async query(kind) {
+  async query(kind, options) {
     const page = await this.pageFor('academic');
     if (new URL(page.url()).hostname === '1.tongji.edu.cn' && new URL(page.url()).pathname === '/workbench') {
       await page.getByText('查看课表', { exact: true }).waitFor({ state: 'visible', timeout: 8000 }).catch(() => {});
     }
-    let snapshot = await this.snapshot(page, 'academic');
+    let snapshot = await this.snapshot(page, 'academic', options);
     if (snapshot.status !== 'ok') return snapshot;
     const parse = kind === 'timetable' ? parseTimetable : parseLectures;
-    let result = parse(snapshot);
+    let result = parse(snapshot, options);
     if (['needs_page_selection', 'unstructured'].includes(result.status) && result.records.length === 0) {
       let navigation = await this.tryNavigation(page, kind);
       // The observed Tongji workbench hides the academic sidebar. Its
@@ -331,9 +342,9 @@ export class CampusBrowser {
         }
       }
       if (navigation.navigated) {
-        snapshot = await this.waitForFresh(page, 'academic', snapshot);
+        snapshot = await this.waitForFresh(page, 'academic', snapshot, undefined, options);
         if (snapshot.status !== 'ok') return snapshot;
-        result = parse(snapshot);
+        result = parse(snapshot, options);
       }
       result.navigation = { navigated: navigation.navigated, candidates: navigation.candidates || [] };
     }
@@ -378,6 +389,8 @@ export class CampusBrowser {
   }
 
   async recommendBooks(options) { return recommendBooks(this, options); }
+
+  async exportTimetable(options) { return exportTimetable(this, options); }
 
   async openBookRequest(options) { return prepareBookRequest(this, options, { handoff: true }); }
 

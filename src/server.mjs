@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { CampusBrowser } from './browser.mjs';
 import { preferenceFields } from './preferences.mjs';
+import { calendarExportOptions } from './calendar-export.mjs';
 
 const browser = new CampusBrowser();
 const server = new McpServer({ name: 'tongji-campus-local', version: '0.5.1' });
@@ -32,6 +33,7 @@ register('campus_set_preferences', '设置本机偏好', '经用户选择后保�
 }), args => browser.configurePreferences(args), false);
 register('campus_open_login', '打开同济网页登录', '打开插件专用浏览器。默认由用户在同济官方页面自行登录。使用 Chrome 且开启 browser 模式时可尝试使用 Chrome 已自动填充的凭证。验证码及扫码由用户自己完成。', { service }, ({ service }) => browser.openLogin(service), false);
 register('campus_query_timetable', '读取个人课表', '读取本机已登录的同济教务网页课表，尝试唯一识别只读课表菜单。无法定位会提示用户打开页面。只依据页面证据，不把读取失败解释成无课。', {}, () => browser.query('timetable'));
+register('campus_export_timetable', '将个人课表导出为 ICS', '仅在用户明确要求导出时调用。复用当前同济教务登录，写入本机 ICS，由用户自行导入日历。学期缺证据时，semesterStartDate 仅填写已核对学期的第一教学周星期一。periodTimes 为官方节次到 [开始,结束] 的映射。仅用 scheduleChanges 传入已确认且课表尚未反映的变更。outputDir 位于本机且须已存在。', calendarExportOptions, args => browser.exportTimetable(args), false);
 register('campus_query_lectures', '读取高等讲堂信息', '读取研究生高等讲堂页面的完成进度或讲座记录。区分统计与列表；不会报名、提交心得或评价。无法定位需用户手动打开页面。', {}, () => browser.query('lectures'));
 register('campus_search_books', '查询同济馆藏', '在同济书目页面填写书名并点击检索。无法唯一识别检索控件则要求用户手动搜索。可借状态只在页面有明确证据时返回；不会预约、续借或借书。', { query: z.string().trim().min(1).max(120) }, ({ query }) => browser.searchBooks(query));
 register('campus_prepare_book_request', '准备图书委托表单（不提交）', '连续完成馆藏检索、版本定位、登录检查并打开在架复本的申请表。只返回取书地选项和联系方式是否已填写；不返回手机号或邮箱，不填写、不提交。多个版本时需提供索书号。', { query: z.string().trim().min(1).max(120), callNumber: z.string().trim().min(1).max(100).optional() }, args => browser.prepareBookRequest(args), false);

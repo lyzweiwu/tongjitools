@@ -14,8 +14,16 @@ test('real stdio handshake discovers tools, calls status and rejects invalid ser
   try {
     await client.connect(transport);
     const { tools } = await client.listTools();
-    assert.equal(tools.length, 14);
+    assert.equal(tools.length, 15);
     assert.ok(tools.some(t => t.name === 'campus_query_timetable'));
+    const exporter = tools.find(t => t.name === 'campus_export_timetable');
+    assert.equal(exporter.annotations.readOnlyHint, false);
+    assert.equal(exporter.annotations.destructiveHint, false);
+    assert.ok(exporter.inputSchema.properties.semesterStartDate);
+    const invalidExport = await client.callTool({ name: 'campus_export_timetable', arguments: { semesterStartDate: '2026-09-15' } });
+    assert.equal(invalidExport.isError, true);
+    const invalidPath = await client.callTool({ name: 'campus_export_timetable', arguments: { outputDir: '../escape' } });
+    assert.equal(invalidPath.structuredContent.status, 'invalid_input');
     assert.ok(tools.some(t => t.name === 'campus_prepare_book_request'));
     assert.ok(tools.some(t => t.name === 'campus_query_seats'));
     assert.ok(tools.some(t => t.name === 'campus_reserve_seat'));

@@ -42,6 +42,7 @@ codex mcp add tongji-campus-local -- /bin/sh "$PWD/bin/launch.sh"
 | `campus_status` | 检查本地运行环境与浏览器状态。 |
 | `campus_open_login` | 打开教务或图书馆页面，供用户自行登录。 |
 | `campus_query_timetable` | 查询个人课表。 |
+| `campus_export_timetable` | 复用个人课表会话，将可确认的课次导出为本机 `.ics` 文件。 |
 | `campus_query_lectures` | 查询高等讲堂进度或页面中的讲座记录。 |
 | `campus_search_books` | 查询书目与页面明确显示的馆藏数量。 |
 | `campus_get_preferences` / `campus_set_preferences` | 查看、保存或重置本机校区、取书点、跨校区和登录偏好。 |
@@ -54,6 +55,39 @@ codex mcp add tongji-campus-local -- /bin/sh "$PWD/bin/launch.sh"
 | `campus_close_browser` | 关闭插件专用浏览器并保留本机会话。 |
 
 若工具提示需要定位页面，在插件打开的浏览器中手动进入目标页面后继续查询。返回 `page_pending` 时，等待页面更新后读取当前页，不将旧结果用于回答新查询。
+
+## 导出课表到日历
+
+在插件专用浏览器登录后，可以说「把这学期的课表导出到苹果日历」。助理调用 `campus_export_timetable` 并返回本机文件路径、课程数、事件数及警告。默认参数为 `{}`，使用教务页面可确认的当前学期和已核验校历。以下是页面所选学期已核对为 2026–2027 学年第 1 学期时的 MCP 参数示例。
+
+```json
+{
+  "semesterStartDate": "2026-09-14",
+  "calendarName": "同济大学课表"
+}
+```
+
+| 参数 | 用途 |
+| --- | --- |
+| `semesterStartDate` | 当学期无法自动确认时，填所选学期第一教学周的星期一，格式 `YYYY-MM-DD`。和已核验校历冲突时请重新核对学期。 |
+| `outputDir` | 已存在、可写的本机绝对目录。默认使用本机会话目录下的 `exports/`，macOS 上通常为 `~/Library/Application Support/TongjiCampusLocal/exports/`。 |
+| `calendarName` | ICS 内的日历名称，默认「同济大学课表」。导入时仍需选择目标日历。 |
+| `periodTimes` | 经核实适用于该课表的节次与时刻映射，值为 `["HH:mm", "HH:mm"]`。只有课表未直接给出时刻时才用于换算节次。 |
+| `scheduleChanges` | 仅传入已通过教务或学院确认、且尚未反映在当前课表的停课、调课或补课。 |
+
+`scheduleChanges` 的每一项用 `courseCode`、原上海日期 `date` 和原开始时刻 `startTime` 唯一匹配一节课。`action` 可填 `cancel`（停课）、`move`（调课）或 `add`（保留原课并另加补课）。后两种需提供 `newDate`，可用 `newTime` 和 `newLocation` 指定已确认的新时段和地点，省略时沿用原值。匹配不到原课次，或新日期时段与同一课程已有安排重叠，工具会要求复核本次变更。
+
+已核验的起始日期和节次作息绑定到 `2025-2026-1`、`2025-2026-2`、`2026-2027-1` 三个学期。校历资料见[同济学期日历数据说明](https://api.tongji.edu.cn/docs/interface/teaching_management_data/educational_administration_data/term_calendar_info/v1_rt_teaching_info_semester)、[同济 2026–2027 学年第一学期校历](https://xxgk.tongji.edu.cn/index.php?classid=3077&newsid=21359&t=show)和[同济建筑与城市规划学院 2026 秋季课表](https://caup.tongji.edu.cn/caupen/d0/84/c33820a381060/page.htm)。未确认的节假日和临时调整保留页面原排课日期，并提示核对通知。
+
+`exported` 表示文件已写入，`partial_export` 还会返回 `omitted`（未导出的课程安排或表格行）及原因。仅可见分页被读取时会提示数据缺口。`needs_calendar_info` 表示缺少可核实的学期锚点或节次时刻，`no_exportable_events` 表示本次没有可写入的课次。登录失效、页面未加载、页面需要手动定位和结构无法识别使用原查询状态。输出文件含个人课程数据，重名时自动加数字后缀。重复导出相同课次保留相同 UID，重复导入时的处理取决于日历客户端。
+
+### 在 macOS 人工验收
+
+1. 重新载入指向此源码目录的 MCP 服务或新开聊天。在插件专用浏览器登录同济教务，选择当前学期的个人课表列表，保留账号和密码在学校页面内。
+2. 请求导出。核对工具返回的学期、`courseCount`、`eventCount`、`warnings` 和 `omitted`。对照教务课表和学院通知，抽查连续周、单双周、换教室或调课。需要补充的起始日期、作息或改课信息核实后再导出。
+3. 在苹果日历使用「文件 → 导入」打开 `.ics`，选择专用测试日历。如果希望导入后继续只存本机，选用「在我的 Mac 上」的日历。核对导入的课次总数，至少检查课程标题、上海时间和校区教室，再核对一条跨周或跨年安排。见 [Apple 日历导入说明](https://support.apple.com/guide/calendar/import-or-export-calendars-icl1023/mac)。
+
+已在 macOS 苹果日历本机测试日历导入三条虚构课次，核对了中文标题与标点、上海时刻、地点及跨年日期。待用真实研究生页面核验当前版「教学安排」的实际格式和校内临时调课。Google Calendar、Outlook 可使用同一 ICS 文件尝试导入，尚未做各客户端实测。
 
 ## 固定委托准备流程（不提交）
 
@@ -124,6 +158,15 @@ sh bin/launch.sh cli login academic
 
 登录后，在同一终端会话中输入 `query timetable`、`query lectures`、`books 线性代数`、`prepare-book 线性代数 O151.2/ZT437.3A`、`read academic`、`read library`、`status` 或 `close`。每次单独启动的 CLI 是独立进程，不会控制另一条 CLI 或 MCP 进程中打开的浏览器。
 
+已保存有效会话时，可单独导出。目录参数需替换为你电脑上已存在的绝对目录。
+
+```sh
+sh bin/launch.sh cli export-timetable
+sh bin/launch.sh cli export-timetable '{"semesterStartDate":"2026-09-14","outputDir":"/absolute/path/to/exports"}'
+```
+
+若在 `cli login academic` 中完成登录，可直接在同一终端输入 `export-timetable` 或 `export-timetable {"semesterStartDate":"2026-09-14"}`，继续使用当前打开的课表。
+
 ## 本地数据与配置
 
 macOS 默认会话目录为 `~/Library/Application Support/TongjiCampusLocal`。该目录中的浏览器配置和会话文件包含敏感登录状态，不应上传或共享。测试与开发的临时数据可通过 `TONGJI_CAMPUS_DATA_DIR` 指定到本机私有目录。
@@ -153,7 +196,7 @@ node test/library-flow-smoke.mjs
 node test/browser-smoke.mjs
 ```
 
-当前默认测试共 45 项，覆盖 MCP 握手、输入验证、解析、空结果、诊断分类与凭证输出边界。座位 Chrome 模拟检查覆盖12类场景，包括按时间不匹配、资格不足、候选失效、重新检查与一次提交。委托准备及交接 Chrome 模拟检查共 16 项，包含实际延迟 13 秒的慢检索、登录失效、版本歧义及禁止提交。通用 Chrome 模拟检查共 9 项，覆盖工作台导航、拆分表格、讲堂卡片、异步结果、新标签和本机会话恢复。测试使用虚构数据，仓库不包含个人课表、讲堂记录、登录会话或页面截图。
+当前默认测试覆盖 MCP 握手、输入验证、解析、空结果、诊断分类、凭证输出边界和 ICS 导出。导出测试包含单双周、换教室、跨年、课程变更、UTF-8 行折叠、稳定 UID、文件冲突和失败状态。座位 Chrome 模拟检查覆盖 12 类场景。委托准备及交接 Chrome 模拟检查共 16 项，包含实际延迟 13 秒的慢检索。通用 Chrome 模拟检查覆盖工作台导航、拆分表格、课表导出、讲堂卡片、异步结果、新标签和本机会话恢复。测试使用虚构数据，仓库不包含个人课表、讲堂记录、登录会话或页面截图。
 
 - `src/`：MCP 服务、浏览器连接、固定准备流程与解析器。
 - `bin/`：启动和依赖安装脚本。

@@ -100,7 +100,7 @@ function headerMap(headers, aliases) {
   return map;
 }
 
-function rowsFrom(table, aliases, requiredField, warnings) {
+function rowsFrom(table, aliases, requiredField, warnings, skipped) {
   const fields = headerMap(table.headers, aliases);
   if (!(requiredField in fields)) return null;
   const records = [];
@@ -108,11 +108,15 @@ function rowsFrom(table, aliases, requiredField, warnings) {
     const row = table.rows[index];
     if (row.length !== table.headers.length) {
       warnings.push(`表格第 ${index + 1} 行与表头列数不同，已保留原文而未映射字段。`);
+      if (!row.every(cell => !cell || EMPTY.test(cell))) skipped?.(index, '列数与表头不符');
       continue;
     }
     // A one-cell empty-state row can appear underneath a full-width table heading.
     if (row.every((cell) => !cell || EMPTY.test(cell))) continue;
-    if (!row[fields[requiredField]]) continue;
+    if (!row[fields[requiredField]]) {
+      skipped?.(index, '缺少课程名称');
+      continue;
+    }
     const record = {};
     for (const [field, column] of Object.entries(fields)) {
       if (row[column]) record[field] = row[column];
@@ -149,7 +153,7 @@ const TIMETABLE = {
   campus: ['校区'],
 };
 
-export function parseTimetable(snapshot) {
+export function parseTimetable(snapshot, { forExport = false } = {}) {
   const result = base('timetable', snapshot);
   if (result.status === 'login_required') return result;
   // Portal navigation often includes “我的课表” on every page. Body text alone
@@ -161,15 +165,33 @@ export function parseTimetable(snapshot) {
   } catch { /* Missing or malformed URL is not evidence of a timetable page. */ }
   const unrelatedTitle = /选课目录|课程目录|培养计划|教学计划|课程设置|课程库/.test(result.source.title);
   const explicitPage = !unrelatedTitle && /课表|课程表|timetable/i.test(`${result.source.title}\n${route}`);
+  if (forExport && unrelatedTitle) return finish(result, {});
+  const aliases = forExport ? {
+    ...TIMETABLE,
+    building: ['教学楼', '楼宇', '上课楼宇'],
+    startTime: ['开始时间', '上课开始时间'],
+    endTime: ['结束时间', '上课结束时间'],
+  } : TIMETABLE;
+  const omittedRows = [];
   let matched = false;
-  for (const table of result.evidence.tables) {
-    const fields = headerMap(table.headers, TIMETABLE);
+  for (const [tableIndex, table] of result.evidence.tables.entries()) {
+    const fields = headerMap(table.headers, aliases);
     const hasScheduleColumns = ['location', 'week', 'day', 'period', 'time'].some((field) => field in fields);
     // Course titles, credits, teachers and semesters also occur in course
     // catalogs and study plans; they are not sufficient schedule evidence.
     if (!explicitPage && !hasScheduleColumns) continue;
-    const records = rowsFrom(table, TIMETABLE, 'course', result.warnings);
+    const skipped = forExport ? (index, reason) => omittedRows.push({ table: tableIndex + 1, row: index + 1, reason }) : undefined;
+    const records = rowsFrom(table, aliases, 'course', result.warnings, skipped);
     if (records !== null) { matched = true; result.records.push(...records); }
+  }
+  if (forExport) {
+    const { text } = result.evidence;
+    result.calendarEvidence = {
+      termLabels: [...(snapshot?.selectedTerms || []), result.source.title, ...text.split('\n')],
+      omittedRows,
+      loading: LOADING.test(text),
+      moreRows: [...text.matchAll(/共\s*(\d+)\s*条(?:记录)?/g)].some(([, total]) => Number(total) > result.records.length),
+    };
   }
   return finish(result, { relevant: explicitPage || matched, matched, hasRows: result.records.length > 0 });
 }
