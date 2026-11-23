@@ -2,7 +2,7 @@ import { mkdir, chmod, readFile, writeFile, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
-import { displayUrl, isSchoolUrl, isServiceUrl, makeConfig } from './config.mjs';
+import { displayUrl, isSchoolUrl, isServiceUrl, makeConfig, version } from './config.mjs';
 import { parseTimetable, parseLectures, parseLibrary } from './parse.mjs';
 import { prepareBookRequest } from './library-flow.mjs';
 import { recommendBooks } from './book-recommendations.mjs';
@@ -177,7 +177,7 @@ export class CampusBrowser {
 
   status() {
     return {
-      status: 'ok', version: '0.5.1', browserRunning: !!this.context,
+      status: 'ok', version, browserRunning: !!this.context,
       browserFound: !!this.config.browser,
       browserName: this.config.browser?.name ?? null,
       browserType: this.config.browser?.type ?? null,

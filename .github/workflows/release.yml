@@ -1,0 +1,46 @@
+name: Release Codex and DeepSeek Harness packages
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Install and test
+        run: |
+          npm install --global pnpm@11.25.0
+          pnpm install --frozen-lockfile --ignore-scripts
+          TONGJI_CAMPUS_DATA_DIR="$RUNNER_TEMP/tongji-tests" pnpm test
+      - name: Package both hosts
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const read = file => JSON.parse(readFileSync(file, 'utf8'));
+          const { version } = read('package.json');
+          assert.equal(process.env.GITHUB_REF_NAME, `v${version}`, 'Release tag must match package.json');
+          for (const file of ['plugin.json', '.codex-plugin/plugin.json']) {
+            assert.equal(read(file).version, version, `${file} must match package.json`);
+          }
+          JS
+          mkdir release
+          pnpm pack --pack-destination release
+          git archive --format=zip --prefix=tongji-campus-local/ \
+            --output="release/tongji-campus-local-codex-${GITHUB_REF_NAME#v}.zip" HEAD -- \
+            .codex-plugin .mcp.json plugin.json mcp.json package.json pnpm-lock.yaml \
+            README.md CHANGELOG.md bin dsh skills src test
+      - name: Publish one GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/*.zip release/*.tgz --verify-tag --generate-notes

@@ -2,12 +2,13 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { CampusBrowser } from './browser.mjs';
+import { version } from './config.mjs';
 import { preferenceFields } from './preferences.mjs';
 import { calendarExportOptions } from './calendar-export.mjs';
 import { renewalCheckOptions, renewalPageOptions } from './loan-flow.mjs';
 
 const browser = new CampusBrowser();
-const server = new McpServer({ name: 'tongji-campus-local', version: '0.5.1' });
+const server = new McpServer({ name: 'tongji-campus-local', version });
 const service = z.enum(['academic', 'library', 'seats']);
 function register(name, title, description, inputSchema, action, readOnly = true) {
   server.registerTool(name, {

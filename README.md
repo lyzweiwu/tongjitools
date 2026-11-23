@@ -1,8 +1,8 @@
 # TongjiTools · 同济校园助手（本地版）
 
-面向 Codex 的同济校园查询工具。用户在自己的电脑上登录同济官网，插件通过插件专用浏览器会话读取本人可见的课表、高等讲堂信息，查询图书馆馆藏，准备不提交的委托表单，按馆舍、日期和楼层查询座位。普通座位需用户选定并确认后预约。
+面向 Codex 和 DeepSeek Harness（DSH）的同济校园查询工具。用户在自己的电脑上登录同济官网，插件通过专用浏览器会话读取本人可见的课表、高等讲堂信息，查询图书馆馆藏，准备不提交的委托表单，按馆舍、日期和楼层查询座位。普通座位需用户选定并确认后预约。
 
-当前版本：`0.5.1`。[更新记录](CHANGELOG.md)。当前适配与验证环境为 **macOS、Google Chrome、研究生教务页面**；本科生专属页面和 Windows 尚未单独验收。
+源码版本 `0.6.0`。[更新记录](CHANGELOG.md)。当前适配与验证环境为 **macOS、Google Chrome、研究生教务页面**；本科生专属页面和 Windows 尚未单独验收。
 
 ## 已验证功能
 
@@ -34,6 +34,28 @@ codex mcp add tongji-campus-local -- /bin/sh "$PWD/bin/launch.sh"
 运行 `codex mcp list` 检查连接，然后新开 Codex 聊天，用户在插件专用浏览器中完成学校登录。没有 `sh` 的环境可在安装 Node 依赖后用 `codex mcp add tongji-campus-local -- node <src/server.mjs 的绝对路径>` 直接接入。Windows 路径识别已测，实际 Windows 客户端未验收。
 
 上述命令直接配置本地 MCP 连接。仓库同时包含 `plugin.json`、`mcp.json`、Codex 兼容清单与 `skills/tongji-campus/SKILL.md`，可用于插件封装。移动源码目录后，需要更新 MCP 连接中的绝对路径。
+
+## 安装和接入 DeepSeek Harness
+
+已验证 macOS 上的 DSH `0.2.2-rc.1` 运行时。DSH 插件直接加载同一个本地 MCP 服务与 `skills/tongji-campus/SKILL.md`。macOS 桌面应用使用 `desktop` profile。若终端没有 `dsh`，可在 DeepSeek Harness 设置中安装命令行工具，或用应用内的可执行文件 `/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh`。
+
+已有源码目录时，在该目录执行：
+
+```sh
+sh bin/setup.sh
+dsh plugin --profile desktop add "link:$PWD"
+```
+
+也可以从同版本发布页下载 DSH `.tgz`，再用 `dsh plugin --profile desktop add "/该文件的绝对路径/tongji-campus-local-0.6.0.tgz"` 安装。DSH 安装器会安装包声明的运行依赖。当前 DSH 包使用宿主自己的 Node。若通过源码链接安装，先执行上面的依赖安装。
+
+重启 DeepSeek Harness，新开对话并说「检查同济校园助手状态」。工具名前缀是 `mcp__tongji_campus__`，状态工具为 `mcp__tongji_campus__campus_status`。DSH 默认在 `~/.dsh/tongji-campus-local`（设置 `DSH_HOME` 时使用其子目录）存放浏览器会话和偏好，首次使用单独登录。这使两端可以各自打开专用浏览器。查询结果进入当前使用的模型对话。
+
+## 两端更新和发布
+
+- **同一台电脑开发**。让两端接入同一个源码目录。Codex 可沿用源码 MCP 连接，DSH 用 `link:` 安装一次。新增功能在 `src/` 实现一次，在 `src/server.mjs` 注册 MCP 工具，需要操作指导时更新同一份 `SKILL.md`。更新源码后，如依赖有变化，执行 `sh bin/setup.sh`，然后重启两个宿主并新开对话。Codex 若从插件包加载技能或清单，按本地市场的安装流程刷新插件包。
+- **给其他用户发布**。同步 `package.json` 和两个 Codex 清单的版本，更新 `CHANGELOG.md`，将源码提交到 GitHub 并推送对应版本标签，例如 `v0.6.0`。标签触发 [发布工作流](.github/workflows/release.yml)，核对版本、跑测试，并将 Codex 源码 ZIP 和 DSH 安装包 `.tgz` 放进同一条 GitHub Release。版本、提交和功能随该标签一起交付。用源码安装的用户可更新同一份 checkout。用发布包安装的用户分别更新到同一版本，重启后确认 `campus_status` 显示的新版本。升级本地源码包时，保持原安装路径或重新配置连接，并保留本机会话目录。
+
+GitHub 发布负责同时提供新版。客户端何时获取新版取决于安装方式。已配置 Git marketplace 的 Codex 可用 `codex plugin marketplace upgrade <marketplace-name>` 刷新目录。已用 DSH `.tgz` 安装的用户对新版本文件再次执行 `dsh plugin --profile desktop add`。尚未接入商店时，可通过 GitHub Releases 订阅新版通知。
 
 ## 工具
 
@@ -133,7 +155,7 @@ sh bin/launch.sh cli recommend-books '{"query":"东野圭吾","match":"author","
 
 ## 图书馆借阅管家
 
-在已连接此源码的 Codex 聊天中说「帮我看看现在借了哪些书，有没有快到期的，哪些可以续借？」工具读取[同济 OPAC 的「我的图书馆」](https://webpac.tongji.edu.cn/opac/openlink.php#/personalCenter)，复用专用浏览器的本地会话。若个人中心提示登录，在该标签中自行认证。馆藏检索能打开时，个人中心仍可能要求登录。
+在已接入校园助手的对话中说「帮我看看现在借了哪些书，有没有快到期的，哪些可以续借？」工具复用专用浏览器的本地会话。若个人中心提示登录，在该标签中自行认证。馆藏检索能打开时，个人中心仍可能要求登录。[同济 OPAC 的「我的图书馆」](https://webpac.tongji.edu.cn/opac/openlink.php#/personalCenter)
 
 | 想做的事 | 使用方式 |
 | --- | --- |
@@ -226,7 +248,7 @@ macOS 默认会话目录为 `~/Library/Application Support/TongjiCampusLocal`。
 | `TONGJI_HEADLESS=1` | 无界面测试模式；人工登录使用默认有界面模式。 |
 | `TONGJI_DIRECT_CONNECTION=1` | 专用浏览器绕过代理直连，不修改系统代理；适用于校园网或 VPN 已接通且代理影响学校认证的情况。 |
 
-密码和验证码由用户在学校网页中处理；插件不提供密码输入或凭证导出工具。Cookie 与业务页面的 sessionStorage 只在本机私有目录保存，状态文件仅本人可读写。查询结果会返回 Codex 并由模型处理，“凭证保存在本机”不代表查询结果不会离开电脑。
+用户在学校网页中输入密码和验证码。Cookie 与业务页面的 sessionStorage 保存在本机私有目录，状态文件仅本人可读写。工具查询的结果会返回当前对话，由宿主的模型处理。
 
 插件提供查询、不提交的图书委托准备，以及用户选定并确认后的普通座位预约；不自动提交其他业务。本项目为个人工具原型，非同济官方产品；正式推广前需核实学校对相应自动化访问方式的要求。
 
@@ -244,5 +266,6 @@ node test/browser-smoke.mjs
 
 - `src/`：MCP 服务、浏览器连接、固定准备流程与解析器。
 - `bin/`：启动和依赖安装脚本。
-- `skills/`：Codex 查询流程与证据处理规则。
+- `skills/`：两端共用的查询流程与证据处理规则。
+- `dsh/`：DeepSeek Harness 安装和加载配置。
 - `test/`：自动化验证与模拟浏览器集成检查。

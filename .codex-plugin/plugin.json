@@ -1,6 +1,6 @@
 {
   "name": "tongji-campus-local",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "在本机登录同济官网，查询课表、讲堂、图书与座位；确认后预约普通座位。",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",

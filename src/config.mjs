@@ -1,7 +1,10 @@
 import { homedir } from 'node:os';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { accessSync, constants, statSync } from 'node:fs';
 import { chromium } from 'playwright-core';
+
+export const { version } = createRequire(import.meta.url)('../package.json');
 
 export function isSchoolUrl(value) {
   try {

@@ -1,0 +1,11 @@
+- insert:
+    - id: tongji-campus-runtime
+      name: tongji-campus-local
+    - id: tongji-campus-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      inject: [tongjiCampusRuntime]
+      config: !!js ctx.tongjiCampusRuntime.mcp
+    - id: tongji-campus-skill
+      name: '@deepseek-ai/dsh-skill-filesystem'
+      inject: [tongjiCampusRuntime, skills]
+      config: !!js ctx.tongjiCampusRuntime.skills

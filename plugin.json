@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "tongji-campus-local",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "在本机登录同济官网，查询课表、讲堂、图书与座位；确认后预约普通座位。",
   "keywords": [
     "tongji",
