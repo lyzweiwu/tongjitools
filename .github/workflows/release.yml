@@ -2,6 +2,7 @@ name: Release Codex and DeepSeek Harness packages
 
 on:
   push:
+    branches: ['release/v*.*.*']
     tags: ['v*.*.*']
 
 permissions:
@@ -24,23 +25,35 @@ jobs:
           TONGJI_CAMPUS_DATA_DIR="$RUNNER_TEMP/tongji-tests" pnpm test
       - name: Package both hosts
         run: |
+          export RELEASE_TAG="${GITHUB_REF_NAME#release/}"
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict';
           import { readFileSync } from 'node:fs';
           const read = file => JSON.parse(readFileSync(file, 'utf8'));
           const { version } = read('package.json');
-          assert.equal(process.env.GITHUB_REF_NAME, `v${version}`, 'Release tag must match package.json');
+          assert.equal(process.env.RELEASE_TAG, `v${version}`, 'Release tag or branch must match package.json');
           for (const file of ['plugin.json', '.codex-plugin/plugin.json']) {
             assert.equal(read(file).version, version, `${file} must match package.json`);
           }
           JS
+          printf 'RELEASE_TAG=%s\n' "$RELEASE_TAG" >> "$GITHUB_ENV"
           mkdir release
           pnpm pack --pack-destination release
           git archive --format=zip --prefix=tongji-campus-local/ \
-            --output="release/tongji-campus-local-codex-${GITHUB_REF_NAME#v}.zip" HEAD -- \
+            --output="release/tongji-campus-local-codex-${RELEASE_TAG#v}.zip" HEAD -- \
             .codex-plugin .mcp.json plugin.json mcp.json package.json pnpm-lock.yaml \
             README.md CHANGELOG.md bin dsh skills src test
       - name: Publish one GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" release/*.zip release/*.tgz --verify-tag --generate-notes
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            gh release create "$RELEASE_TAG" release/*.zip release/*.tgz --verify-tag --generate-notes
+          else
+            git_refs=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$RELEASE_TAG" --jq '.[].ref')
+            if grep -Fxq "refs/tags/$RELEASE_TAG" <<< "$git_refs"; then
+              echo "Tag $RELEASE_TAG already exists. Use the tag workflow to publish it." >&2
+              exit 1
+            fi
+            gh release create "$RELEASE_TAG" release/*.zip release/*.tgz --target "$GITHUB_SHA" --generate-notes
+          fi

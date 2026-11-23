@@ -53,7 +53,7 @@ dsh plugin --profile desktop add "link:$PWD"
 ## 两端更新和发布
 
 - **同一台电脑开发**。让两端接入同一个源码目录。Codex 可沿用源码 MCP 连接，DSH 用 `link:` 安装一次。新增功能在 `src/` 实现一次，在 `src/server.mjs` 注册 MCP 工具，需要操作指导时更新同一份 `SKILL.md`。更新源码后，如依赖有变化，执行 `sh bin/setup.sh`，然后重启两个宿主并新开对话。Codex 若从插件包加载技能或清单，按本地市场的安装流程刷新插件包。
-- **给其他用户发布**。同步 `package.json` 和两个 Codex 清单的版本，更新 `CHANGELOG.md`，将源码提交到 GitHub 并推送对应版本标签，例如 `v0.6.0`。标签触发 [发布工作流](.github/workflows/release.yml)，核对版本、跑测试，并将 Codex 源码 ZIP 和 DSH 安装包 `.tgz` 放进同一条 GitHub Release。版本、提交和功能随该标签一起交付。用源码安装的用户可更新同一份 checkout。用发布包安装的用户分别更新到同一版本，重启后确认 `campus_status` 显示的新版本。升级本地源码包时，保持原安装路径或重新配置连接，并保留本机会话目录。
+- **给其他用户发布**。同步 `package.json` 和两个 Codex 清单的版本，更新 `CHANGELOG.md`，将源码提交到 GitHub。推送对应标签（如 `v0.6.0`）或发布分支（如 `release/v0.6.0`），即可触发 [发布工作流](.github/workflows/release.yml)。工作流核对版本、跑测试，将 Codex 源码 ZIP 和 DSH 安装包 `.tgz` 放进同一条 GitHub Release。通过分支触发时，工作流为该提交创建标签。用源码安装的用户可更新同一份 checkout。用发布包安装的用户分别更新到同一版本，重启后确认 `campus_status` 显示的新版本。升级本地源码包时，保持原安装路径或重新配置连接，并保留本机会话目录。
 
 GitHub 发布负责同时提供新版。客户端何时获取新版取决于安装方式。已配置 Git marketplace 的 Codex 可用 `codex plugin marketplace upgrade <marketplace-name>` 刷新目录。已用 DSH `.tgz` 安装的用户对新版本文件再次执行 `dsh plugin --profile desktop add`。尚未接入商店时，可通过 GitHub Releases 订阅新版通知。
 
